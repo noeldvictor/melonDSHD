@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>427</width>
-    <height>262</height>
+    <width>560</width>
+    <height>360</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -60,6 +60,74 @@
        <widget class="QCheckBox" name="cbxComputeHiResCoords">
         <property name="text">
          <string>Use high resolution coordinates</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="0">
+       <widget class="QCheckBox" name="cbHirezDump">
+        <property name="text">
+         <string>Dump 3D textures for HD packs(opengl compute shader only)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="0">
+       <widget class="QCheckBox" name="cbHirezReplace">
+        <property name="text">
+         <string>Use HD texture replacements (opengl compute shader only)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="labelDumpPath">
+        <property name="text">
+         <string>Texture dump folder:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QLabel" name="lblDumpFolder">
+        <property name="text">
+         <string notr="true">User/Dump/Textures</string>
+        </property>
+        <property name="textInteractionFlags">
+         <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="2">
+       <widget class="QPushButton" name="btnOpenDumpFolder">
+        <property name="text">
+         <string>Open</string>
+        </property>
+        <property name="toolTip">
+         <string>Open the texture dump folder</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="labelLoadPath">
+        <property name="text">
+         <string>Texture load folder:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QLabel" name="lblLoadFolder">
+        <property name="text">
+         <string notr="true">User/Load/Textures</string>
+        </property>
+        <property name="textInteractionFlags">
+         <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="2">
+       <widget class="QPushButton" name="btnOpenLoadFolder">
+        <property name="text">
+         <string>Open</string>
+        </property>
+        <property name="toolTip">
+         <string>Open the texture load folder</string>
         </property>
        </widget>
       </item>

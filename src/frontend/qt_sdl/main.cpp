@@ -209,8 +209,8 @@ void pathInit()
 #else
         QString confdir;
         QDir config(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation));
-        config.mkdir("melonDS");
-        confdir = config.absolutePath() + QDir::separator() + "melonDS";
+        config.mkdir("melonDSHD");
+        confdir = config.absolutePath() + QDir::separator() + "melonDSHD";
         emuDirectory = confdir;
 #endif
     }
@@ -246,7 +246,7 @@ MelonApplication::MelonApplication(int& argc, char** argv)
 #if !defined(Q_OS_APPLE)
     setWindowIcon(QIcon(":/melon-icon"));
     #if defined(Q_OS_UNIX)
-        setDesktopFileName(QString("net.kuribo64.melonDS"));
+        setDesktopFileName(QString("io.github.noeldvictor.melonDSHD"));
     #endif
 #endif
 }
@@ -284,7 +284,7 @@ int main(int argc, char** argv)
     qputenv("QT_QPA_PLATFORM", "windows:darkmode=2");
 #endif
 
-    printf("melonDS " MELONDS_VERSION "\n");
+    printf("melonDSHD " MELONDS_VERSION "\n");
     printf(MELONDS_URL "\n");
 
     // easter egg - not worth checking other cases for something so dumb
@@ -296,10 +296,28 @@ int main(int argc, char** argv)
 
     CLI::CommandLineOptions* options = CLI::ManageArgs(melon);
 
+    // Show startup disclaimer (skip in offscreen/headless or if disabled via env)
+    {
+        QByteArray qpa = qgetenv("QT_QPA_PLATFORM");
+        if (!qEnvironmentVariableIsSet("MELONDSHD_NO_DISCLAIMER") && !qpa.contains("offscreen"))
+        {
+            QString text =
+                "<b>Note:</b> This is an <b>unofficial</b> fork to experiment with <b>HD</b> features. "
+                "It is a <b>very rough, experimental side project</b>. "
+                "We truly appreciate the <b>core melonDS team</b>—please <b>do not contact them</b> about issues here. "
+                "Use the project page: <a href=\"https://github.com/noeldvictor/melonDSHD\">github.com/noeldvictor/melonDSHD</a>. "
+                "<b>No promises of future development or features.</b>";
+            QMessageBox mb(QMessageBox::Information, "melonDSHD", text, QMessageBox::Ok);
+            mb.setTextFormat(Qt::RichText);
+            mb.setTextInteractionFlags(Qt::TextBrowserInteraction);
+            mb.exec();
+        }
+    }
+
     // http://stackoverflow.com/questions/14543333/joystick-wont-work-using-sdl
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
-    SDL_SetHint(SDL_HINT_APP_NAME, "melonDS");
+    SDL_SetHint(SDL_HINT_APP_NAME, "melonDSHD");
 
     if (SDL_Init(SDL_INIT_HAPTIC) < 0)
     {
@@ -319,7 +337,7 @@ int main(int argc, char** argv)
         QString errorStr = "Failed to initialize SDL. This could indicate an issue with your audio driver.\n\nThe error was: ";
         errorStr += err;
 
-        QMessageBox::critical(nullptr, "melonDS", errorStr);
+        QMessageBox::critical(nullptr, "melonDSHD", errorStr);
         return 1;
     }
 
@@ -330,8 +348,8 @@ int main(int argc, char** argv)
 
     if (!Config::Load())
         QMessageBox::critical(nullptr,
-                              "melonDS",
-                              "Unable to write to config.\nPlease check the write permissions of the folder you placed melonDS in.");
+                              "melonDSHD",
+                              "Unable to write to config.\nPlease check the write permissions of the folder you placed melonDSHD in.");
 
     camStarted[0] = false;
     camStarted[1] = false;

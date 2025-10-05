@@ -90,17 +90,17 @@ fix_interface_includes(PkgConfig::SDL2 PkgConfig::LibArchive)
 
 add_compile_definitions(ARCHIVE_SUPPORT_ENABLED)
 
-add_executable(melonDS ${SOURCES_QT_SDL})
+add_executable(melonDSHD ${SOURCES_QT_SDL})
 
 add_subdirectory("../../net"
     ${CMAKE_BINARY_DIR}/net)
 
-target_link_libraries(melonDS PRIVATE net-utils)
+target_link_libraries(melonDSHD PRIVATE net-utils)
 
 if (WIN32)
-    target_link_libraries(melonDS PUBLIC opengl32)
+    target_link_libraries(melonDSHD PUBLIC opengl32)
 
-    target_sources(melonDS PRIVATE
+    target_sources(melonDSHD PRIVATE
         ../duckstation/gl/context_wgl.cpp
 
         ../glad/glad_wgl.c
@@ -112,11 +112,11 @@ if (WIN32)
 elseif (APPLE)
     if (NOT USE_QT6)
         find_library(COCOA_LIB Cocoa)
-        target_link_libraries(melonDS PRIVATE ${COCOA_LIB})
+        target_link_libraries(melonDSHD PRIVATE ${COCOA_LIB})
     endif()
     find_library(OPENGL_LIB OpenGL)
-    target_link_libraries(melonDS PRIVATE ${OPENGL_LIB})
-    target_sources(melonDS PRIVATE
+    target_link_libraries(melonDSHD PRIVATE ${OPENGL_LIB})
+    target_sources(melonDSHD PRIVATE
         ../duckstation/gl/context_agl.mm
     )
     set_source_files_properties(
@@ -137,14 +137,14 @@ else()
 
         find_package(Wayland REQUIRED Client)
 
-        target_compile_definitions(melonDS PRIVATE WAYLAND_ENABLED)
+        target_compile_definitions(melonDSHD PRIVATE WAYLAND_ENABLED)
 
-        target_sources(melonDS PRIVATE
+        target_sources(melonDSHD PRIVATE
             ../duckstation/gl/context_egl_wayland.cpp
         )
     endif()
 
-    target_sources(melonDS PRIVATE
+    target_sources(melonDSHD PRIVATE
         ../duckstation/gl/context_egl.cpp
         ../duckstation/gl/context_egl_x11.cpp
         ../duckstation/gl/context_glx.cpp
@@ -153,49 +153,49 @@ else()
         ../glad/glad_egl.c
         ../glad/glad_glx.c
     )
-    target_link_libraries(melonDS PRIVATE "${X11_LIBRARIES}" "${EGL_LIBRARIES}")
-    target_include_directories(melonDS PRIVATE "${X11_INCLUDE_DIR}")
+    target_link_libraries(melonDSHD PRIVATE "${X11_LIBRARIES}" "${EGL_LIBRARIES}")
+    target_include_directories(melonDSHD PRIVATE "${X11_INCLUDE_DIR}")
     add_compile_definitions(QAPPLICATION_CLASS=QApplication)
 endif()
 
 
 if (BUILD_STATIC)
-    qt_import_plugins(melonDS INCLUDE Qt::QSvgPlugin)
+    qt_import_plugins(melonDSHD INCLUDE Qt::QSvgPlugin)
     if (WIN32 AND USE_QT6)
-        qt_import_plugins(melonDS INCLUDE Qt::QModernWindowsStylePlugin)
+        qt_import_plugins(melonDSHD INCLUDE Qt::QModernWindowsStylePlugin)
     endif()
     if (USE_VCPKG AND UNIX AND NOT APPLE)
         pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
-        target_link_libraries(melonDS PRIVATE PkgConfig::ALSA)
+        target_link_libraries(melonDSHD PRIVATE PkgConfig::ALSA)
     else()
-        target_link_options(melonDS PRIVATE -static)
+        target_link_options(melonDSHD PRIVATE -static)
     endif()
 endif()
 
-target_include_directories(melonDS PUBLIC
+target_include_directories(melonDSHD PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 if (USE_QT6)
-    target_include_directories(melonDS PUBLIC ${Qt6Gui_PRIVATE_INCLUDE_DIRS})
+    target_include_directories(melonDSHD PUBLIC ${Qt6Gui_PRIVATE_INCLUDE_DIRS})
 else()
-    target_include_directories(melonDS PUBLIC ${Qt5Gui_PRIVATE_INCLUDE_DIRS})
+    target_include_directories(melonDSHD PUBLIC ${Qt5Gui_PRIVATE_INCLUDE_DIRS})
 endif()
-target_link_libraries(melonDS PRIVATE core)
-target_link_libraries(melonDS PRIVATE PkgConfig::SDL2 PkgConfig::LibArchive PkgConfig::Zstd PkgConfig::Faad)
-target_link_libraries(melonDS PRIVATE ${QT_LINK_LIBS} ${CMAKE_DL_LIBS})
+target_link_libraries(melonDSHD PRIVATE core)
+target_link_libraries(melonDSHD PRIVATE PkgConfig::SDL2 PkgConfig::LibArchive PkgConfig::Zstd PkgConfig::Faad)
+target_link_libraries(melonDSHD PRIVATE ${QT_LINK_LIBS} ${CMAKE_DL_LIBS})
 
 if (WIN32)
     option(PORTABLE "Make a portable build that looks for its configuration in the current directory" ON)
 
     if (PORTABLE)
-        target_compile_definitions(melonDS PRIVATE WIN32_PORTABLE)
+        target_compile_definitions(melonDSHD PRIVATE WIN32_PORTABLE)
     endif()
 
     string(REPLACE . , MELON_RC_VERSION ${melonDS_VERSION})
     configure_file("${CMAKE_SOURCE_DIR}/res/melon.rc.in" "${CMAKE_BINARY_DIR}/res/melon.rc")
-    target_sources(melonDS PUBLIC "${CMAKE_BINARY_DIR}/res/melon.rc")
-    target_include_directories(melonDS PRIVATE "${CMAKE_BINARY_DIR}/res")
+    target_sources(melonDSHD PUBLIC "${CMAKE_BINARY_DIR}/res/melon.rc")
+    target_include_directories(melonDSHD PRIVATE "${CMAKE_BINARY_DIR}/res")
 
     if (${ARCHITECTURE} STREQUAL x86_64)
         set(WIN32_ARCHITECTURE amd64)
@@ -207,19 +207,19 @@ if (WIN32)
 
     configure_file("${CMAKE_SOURCE_DIR}/res/xp.manifest.in" "${CMAKE_BINARY_DIR}/res/xp.manifest")
 
-    target_link_libraries(melonDS PRIVATE ws2_32 iphlpapi)
-    set_target_properties(melonDS PROPERTIES LINK_FLAGS_DEBUG "-mconsole")
+    target_link_libraries(melonDSHD PRIVATE ws2_32 iphlpapi)
+    set_target_properties(melonDSHD PROPERTIES LINK_FLAGS_DEBUG "-mconsole")
 endif()
 
 if (APPLE)
     # Copy icon into the bundle
     set(RESOURCE_FILES "${CMAKE_SOURCE_DIR}/res/melon.icns")
-    target_sources(melonDS PUBLIC "${RESOURCE_FILES}")
+    target_sources(melonDSHD PUBLIC "${RESOURCE_FILES}")
 
-    set_target_properties(melonDS PROPERTIES
+    set_target_properties(melonDSHD PROPERTIES
         MACOSX_BUNDLE true
         MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/res/melon.plist.in
-        OUTPUT_NAME melonDS
+        OUTPUT_NAME melonDSHD
         RESOURCE "${RESOURCE_FILES}")
 
 
@@ -230,7 +230,7 @@ if (APPLE)
         if (MACOS_BUILD_DMG)
             set(DMGARG "--dmg")
         endif()
-        add_custom_command(TARGET melonDS POST_BUILD
+        add_custom_command(TARGET melonDSHD POST_BUILD
             COMMAND ${CMAKE_SOURCE_DIR}/tools/mac-libs.rb ${DMGARG} ${CMAKE_BINARY_DIR}
             COMMENT "Bundling macOS libraries...")
     endif()
@@ -240,25 +240,25 @@ if (UNIX AND NOT APPLE)
     foreach(SIZE 16 32 48 64 128 256)
         install(FILES ${CMAKE_SOURCE_DIR}/res/icon/melon_${SIZE}x${SIZE}.png
             DESTINATION ${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/${SIZE}x${SIZE}/apps
-            RENAME net.kuribo64.melonDS.png)
+            RENAME io.github.noeldvictor.melonDSHD.png)
     endforeach()
 
-    install(FILES ${CMAKE_SOURCE_DIR}/res/net.kuribo64.melonDS.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/share/applications)
-    install(TARGETS melonDS BUNDLE DESTINATION ${CMAKE_BINARY_DIR} RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+    install(FILES ${CMAKE_SOURCE_DIR}/res/io.github.noeldvictor.melonDSHD.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/share/applications)
+    install(TARGETS melonDSHD BUNDLE DESTINATION ${CMAKE_BINARY_DIR} RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
 
     if (NOT USE_QT6)
-        set_target_properties(melonDS PROPERTIES
+        set_target_properties(melonDSHD PROPERTIES
             INTERPROCEDURAL_OPTIMIZATION OFF
             INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
     endif()
 elseif(APPLE)
-    install(TARGETS melonDS BUNDLE DESTINATION "${CMAKE_INSTALL_PREFIX}/Applications")
+    install(TARGETS melonDSHD BUNDLE DESTINATION "${CMAKE_INSTALL_PREFIX}/Applications")
 endif()
 
 if (ENABLE_OGLRENDERER)
     set(MELONDS_GL_HEADER \"frontend/glad/glad.h\" CACHE STRING "Path to a header that contains OpenGL function and type declarations.")
 
-    target_compile_definitions(melonDS PUBLIC OGLRENDERER_ENABLED)
-    target_compile_definitions(melonDS PUBLIC MELONDS_GL_HEADER=${MELONDS_GL_HEADER})
+    target_compile_definitions(melonDSHD PUBLIC OGLRENDERER_ENABLED)
+    target_compile_definitions(melonDSHD PUBLIC MELONDS_GL_HEADER=${MELONDS_GL_HEADER})
     target_compile_definitions(core PUBLIC MELONDS_GL_HEADER=${MELONDS_GL_HEADER})
 endif()

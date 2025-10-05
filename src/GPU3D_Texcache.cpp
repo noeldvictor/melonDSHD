@@ -97,6 +97,7 @@ void ConvertBitmapTexture(u32 width, u32 height, u32* output, u32 addr, GPU& gpu
 }
 
 template void ConvertBitmapTexture<outputFmt_RGB6A5>(u32 width, u32 height, u32* output, u32 addr, GPU& gpu);
+template void ConvertBitmapTexture<outputFmt_RGBA8>(u32 width, u32 height, u32* output, u32 addr, GPU& gpu);
 
 template <int outputFmt>
 void ConvertCompressedTexture(u32 width, u32 height, u32* output, u32 addr, u32 addrAux, u32 palAddr, GPU& gpu)
@@ -197,6 +198,7 @@ void ConvertCompressedTexture(u32 width, u32 height, u32* output, u32 addr, u32 
 }
 
 template void ConvertCompressedTexture<outputFmt_RGB6A5>(u32, u32, u32*, u32, u32, u32, GPU&);
+template void ConvertCompressedTexture<outputFmt_RGBA8>(u32, u32, u32*, u32, u32, u32, GPU&);
 
 template <int outputFmt, int X, int Y>
 void ConvertAXIYTexture(u32 width, u32 height, u32* output, u32 addr, u32 palAddr, GPU& gpu)
@@ -229,6 +231,8 @@ void ConvertAXIYTexture(u32 width, u32 height, u32* output, u32 addr, u32 palAdd
 
 template void ConvertAXIYTexture<outputFmt_RGB6A5, 5, 3>(u32, u32, u32*, u32, u32, GPU&);
 template void ConvertAXIYTexture<outputFmt_RGB6A5, 3, 5>(u32, u32, u32*, u32, u32, GPU&);
+template void ConvertAXIYTexture<outputFmt_RGBA8, 5, 3>(u32, u32, u32*, u32, u32, GPU&);
+template void ConvertAXIYTexture<outputFmt_RGBA8, 3, 5>(u32, u32, u32*, u32, u32, GPU&);
 
 template <int outputFmt, int colorBits>
 void ConvertNColorsTexture(u32 width, u32 height, u32* output, u32 addr, u32 palAddr, bool color0Transparent, GPU& gpu)
@@ -266,5 +270,8 @@ void ConvertNColorsTexture(u32 width, u32 height, u32* output, u32 addr, u32 pal
 template void ConvertNColorsTexture<outputFmt_RGB6A5, 2>(u32, u32, u32*, u32, u32, bool, GPU&);
 template void ConvertNColorsTexture<outputFmt_RGB6A5, 4>(u32, u32, u32*, u32, u32, bool, GPU&);
 template void ConvertNColorsTexture<outputFmt_RGB6A5, 8>(u32, u32, u32*, u32, u32, bool, GPU&);
+template void ConvertNColorsTexture<outputFmt_RGBA8, 2>(u32, u32, u32*, u32, u32, bool, GPU&);
+template void ConvertNColorsTexture<outputFmt_RGBA8, 4>(u32, u32, u32*, u32, u32, bool, GPU&);
+template void ConvertNColorsTexture<outputFmt_RGBA8, 8>(u32, u32, u32*, u32, u32, bool, GPU&);
 
 }

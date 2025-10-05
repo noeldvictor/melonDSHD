@@ -27,6 +27,7 @@
 #include <string>
 #include <utility>
 #include <fstream>
+#include <cstdlib>
 
 #include <QDateTime>
 
@@ -47,6 +48,11 @@
 #include "DSi_I2C.h"
 #include "FreeBIOS.h"
 #include "main.h"
+
+// High-res texture dump/replacement (OpenGL backends)
+#ifdef OGLRENDERER_ENABLED
+#include "video/hirez/TexDump.h"
+#endif
 
 using std::make_unique;
 using std::pair;
@@ -1882,6 +1888,32 @@ bool EmuInstance::loadROM(QStringList filepath, bool reset, QString& errorstr)
     baseROMName = romname;
     baseAssetName = romname.substr(0, romname.rfind('.'));
 
+    // Initialize hires texture dump/replacement on DS ROM load
+    #ifdef OGLRENDERER_ENABLED
+    {
+        melonDS::hires::TexDumpConfig cfg;
+        // UI-configured toggles
+        bool cfgDump = globalCfg.GetBool("3D.HirezDump");
+        bool cfgReplace = globalCfg.GetBool("3D.HirezReplace");
+        // Env overrides (if set)
+        if (const char* d = std::getenv("MELONDS_TEX_DUMP")) cfgDump = (*d != '0');
+        if (const char* r = std::getenv("MELONDS_TEX_REPLACE")) cfgReplace = (*r != '0');
+        cfg.enableDump = cfgDump;
+        cfg.enableReplace = cfgReplace;
+        if (const char* dd = std::getenv("MELONDS_DUMP_DIR")) cfg.dumpDir = dd;
+        if (const char* ld = std::getenv("MELONDS_LOAD_DIR")) cfg.loadDir = ld;
+
+        std::string romPath;
+        if (!basepath.empty()) romPath = basepath + "/" + romname;
+        else                   romPath = romname;
+        std::string gameId = melonDS::hires::ExtractNdsGameCodeFromRom(romPath);
+        if (gameId.empty()) {
+            gameId = baseAssetName;
+        }
+        melonDS::hires::Init(cfg, gameId);
+    }
+    #endif
+
     u32 savelen = 0;
     std::unique_ptr<u8[]> savedata = nullptr;
 
@@ -1978,6 +2010,11 @@ bool EmuInstance::loadROM(QStringList filepath, bool reset, QString& errorstr)
 void EmuInstance::ejectCart()
 {
     ndsSave = nullptr;
+
+    // Shutdown hires texture system when game is ejected
+    #ifdef OGLRENDERER_ENABLED
+    melonDS::hires::Shutdown();
+    #endif
 
     if (emuIsActive())
     {

@@ -8,6 +8,9 @@
 #include <unordered_map>
 #include <vector>
 
+// Optional high-res texture dump/replacement
+#include "video/hirez/TexDump.h"
+
 #define XXH_STATIC_LINKING_ONLY
 #include "xxhash/xxhash.h"
 
@@ -237,6 +240,67 @@ public:
             case 3: ConvertNColorsTexture<outputFmt_RGB6A5, 4>(width, height, DecodingBuffer, addr, palAddr, color0Transparent, gpu); break;
             case 4: ConvertNColorsTexture<outputFmt_RGB6A5, 8>(width, height, DecodingBuffer, addr, palAddr, color0Transparent, gpu); break;
             }
+        }
+
+        // Hi-res texture dump & replacement (compute path integration)
+        // Only do the conversion when dump or replacement is enabled.
+        if (melonDS::hires::DumpEnabled() || melonDS::hires::ReplaceEnabled()) {
+            std::vector<u8> hiresRGBA; // RGBA8 for hashing/dumping
+            hiresRGBA.resize(size_t(width)*height*4);
+            // Convert from packed RGB6A5 in DecodingBuffer to RGBA8 for hashing/dump
+            for (size_t i = 0, N = size_t(width)*height; i < N; ++i) {
+                u32 p = DecodingBuffer[i];
+                u8 r6 = u8(p & 0xFF);
+                u8 g6 = u8((p >> 8) & 0xFF);
+                u8 b6 = u8((p >> 16) & 0xFF);
+                u8 a5 = u8((p >> 24) & 0x1F);
+                // scale 6->8 and 5->8
+                u8 r8 = u8((int(r6) * 255 + 31) / 63);
+                u8 g8 = u8((int(g6) * 255 + 31) / 63);
+                u8 b8 = u8((int(b6) * 255 + 31) / 63);
+                u8 a8 = u8((int(a5) * 255 + 15) / 31);
+                hiresRGBA[i*4+0] = r8;
+                hiresRGBA[i*4+1] = g8;
+                hiresRGBA[i*4+2] = b8;
+                hiresRGBA[i*4+3] = a8;
+            }
+
+            // Map DS fmt to hirez tag
+            melonDS::hires::DsiTexFmt fmtTag = melonDS::hires::DsiTexFmt::Unknown;
+            switch (fmt) {
+                case 7: fmtTag = melonDS::hires::DsiTexFmt::Direct; break;
+                case 5: fmtTag = melonDS::hires::DsiTexFmt::Tex4x4; break;
+                case 6: fmtTag = melonDS::hires::DsiTexFmt::A5I3; break;
+                case 1: fmtTag = melonDS::hires::DsiTexFmt::A3I5; break;
+                case 2: fmtTag = melonDS::hires::DsiTexFmt::Pal4; break;
+                case 3: fmtTag = melonDS::hires::DsiTexFmt::Pal16; break;
+                case 4: fmtTag = melonDS::hires::DsiTexFmt::Pal256; break;
+                default: break;
+            }
+
+            bool pal0Transparent = (fmt >= 2 && fmt <= 4) && (texParam & (1<<29));
+            melonDS::hires::TextureKey key = melonDS::hires::MakeKey(hiresRGBA.data(), width, height, /*hasMips*/false, pal0Transparent, fmtTag);
+
+            // Try load replacement (RGBA8). For compute path, we currently only support same-size replacement
+            std::vector<u8> replRGBA; u32 rw=width, rh=height;
+            if (melonDS::hires::TryLoadReplacement(key, replRGBA, rw, rh) && rw == width && rh == height) {
+                // Convert RGBA8 -> RGB6A5 packed (match DecodingBuffer format)
+                for (size_t i = 0, N = size_t(width)*height; i < N; ++i) {
+                    u8 r8 = replRGBA[i*4+0];
+                    u8 g8 = replRGBA[i*4+1];
+                    u8 b8 = replRGBA[i*4+2];
+                    u8 a8 = replRGBA[i*4+3];
+                    u8 r6 = u8((int(r8) * 63 + 127) / 255);
+                    u8 g6 = u8((int(g8) * 63 + 127) / 255);
+                    u8 b6 = u8((int(b8) * 63 + 127) / 255);
+                    u8 a5 = u8((int(a8) * 31 + 127) / 255);
+                    DecodingBuffer[i] = u32(r6) | (u32(g6) << 8) | (u32(b6) << 16) | (u32(a5) << 24);
+                }
+                hiresRGBA.swap(replRGBA); // dump the replacement image
+            }
+
+            // Async dump (final image: replacement if used, else original)
+            melonDS::hires::DumpIfEnabled(key, hiresRGBA.data(), width, height);
         }
 
         for (int i = 0; i < 2; i++)

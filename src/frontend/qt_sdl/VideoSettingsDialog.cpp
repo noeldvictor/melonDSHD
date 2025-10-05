@@ -27,6 +27,11 @@
 
 #include "VideoSettingsDialog.h"
 #include "ui_VideoSettingsDialog.h"
+#include <QDir>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QProcess>
+#include <cstdlib>
 
 
 inline bool VideoSettingsDialog::UsesGL()
@@ -66,6 +71,8 @@ VideoSettingsDialog::VideoSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     oldGLScale = cfg.GetInt("3D.GL.ScaleFactor");
     oldGLBetterPolygons = cfg.GetBool("3D.GL.BetterPolygons");
     oldHiresCoordinates = cfg.GetBool("3D.GL.HiresCoordinates");
+    bool oldHirezDump = cfg.GetBool("3D.HirezDump");
+    bool oldHirezReplace = cfg.GetBool("3D.HirezReplace");
 
     grp3DRenderer = new QButtonGroup(this);
     grp3DRenderer->addButton(ui->rb3DSoftware, renderer3D_Software);
@@ -99,12 +106,15 @@ VideoSettingsDialog::VideoSettingsDialog(QWidget* parent) : QDialog(parent), ui(
 
     ui->cbBetterPolygons->setChecked(oldGLBetterPolygons != 0);
     ui->cbxComputeHiResCoords->setChecked(oldHiresCoordinates != 0);
+    ui->cbHirezDump->setChecked(oldHirezDump != 0);
+    ui->cbHirezReplace->setChecked(oldHirezReplace != 0);
 
     if (!oldVSync)
         ui->sbVSyncInterval->setEnabled(false);
     setVsyncControlEnable(UsesGL());
 
     setEnabled();
+    updateHirezPaths();
 }
 
 VideoSettingsDialog::~VideoSettingsDialog()
@@ -148,6 +158,60 @@ void VideoSettingsDialog::setVsyncControlEnable(bool hasOGL)
 {
     ui->cbVSync->setEnabled(hasOGL);
     ui->sbVSyncInterval->setEnabled(hasOGL);
+}
+
+void VideoSettingsDialog::updateHirezPaths()
+{
+#ifdef OGLRENDERER_ENABLED
+    // Resolve dump/load folder base paths (env override or defaults)
+    const char* dd = std::getenv("MELONDS_DUMP_DIR");
+    const char* ld = std::getenv("MELONDS_LOAD_DIR");
+    QString dumpBase = dd ? QString::fromLocal8Bit(dd) : QStringLiteral("User/Dump/Textures");
+    QString loadBase = ld ? QString::fromLocal8Bit(ld) : QStringLiteral("User/Load/Textures");
+
+    // Make absolute for display
+    auto absDump = QDir::cleanPath(QDir::current().absoluteFilePath(dumpBase));
+    auto absLoad = QDir::cleanPath(QDir::current().absoluteFilePath(loadBase));
+    ui->lblDumpFolder->setText(absDump);
+    ui->lblLoadFolder->setText(absLoad);
+#else
+    ui->lblDumpFolder->setText("-");
+    ui->lblLoadFolder->setText("-");
+#endif
+}
+
+void VideoSettingsDialog::on_btnOpenDumpFolder_clicked()
+{
+    QString path = ui->lblDumpFolder->text();
+    if (path.isEmpty() || path == QLatin1String("-")) return;
+    QDir dir(path);
+    if (!dir.exists()) QDir().mkpath(path);
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+#ifdef Q_OS_WIN
+        QProcess::startDetached("explorer", { QDir::toNativeSeparators(path) });
+#elif defined(Q_OS_MAC)
+        QProcess::startDetached("open", { path });
+#else
+        QProcess::startDetached("xdg-open", { path });
+#endif
+    }
+}
+
+void VideoSettingsDialog::on_btnOpenLoadFolder_clicked()
+{
+    QString path = ui->lblLoadFolder->text();
+    if (path.isEmpty() || path == QLatin1String("-")) return;
+    QDir dir(path);
+    if (!dir.exists()) QDir().mkpath(path);
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+#ifdef Q_OS_WIN
+        QProcess::startDetached("explorer", { QDir::toNativeSeparators(path) });
+#elif defined(Q_OS_MAC)
+        QProcess::startDetached("open", { path });
+#else
+        QProcess::startDetached("xdg-open", { path });
+#endif
+    }
 }
 
 void VideoSettingsDialog::onChange3DRenderer(int renderer)
@@ -228,4 +292,16 @@ void VideoSettingsDialog::on_cbxComputeHiResCoords_stateChanged(int state)
     cfg.SetBool("3D.GL.HiresCoordinates", (state != 0));
 
     emit updateVideoSettings(false);
+}
+
+void VideoSettingsDialog::on_cbHirezDump_stateChanged(int state)
+{
+    auto& cfg = emuInstance->getGlobalConfig();
+    cfg.SetBool("3D.HirezDump", (state != 0));
+}
+
+void VideoSettingsDialog::on_cbHirezReplace_stateChanged(int state)
+{
+    auto& cfg = emuInstance->getGlobalConfig();
+    cfg.SetBool("3D.HirezReplace", (state != 0));
 }

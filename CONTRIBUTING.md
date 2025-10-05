@@ -1,4 +1,4 @@
-# Contributor guide for melonDS
+# Contributor guide for melonDSHD (fork of melonDS)
 
 Please follow a style as documented here. Note that this guide was not always enforced, so some parts of the code violate it.
 

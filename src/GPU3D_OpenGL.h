@@ -22,6 +22,9 @@
 #include "GPU3D.h"
 #include "GPU_OpenGL.h"
 #include "OpenGLSupport.h"
+#include <unordered_map>
+#include <unordered_set>
+#include <string>
 
 namespace melonDS
 {
@@ -71,6 +74,9 @@ private:
         u32 EdgeIndicesOffset;
 
         u32 RenderKey;
+
+        // High-res replacement texture info (classic GL path)
+        GLuint ReplTexID = 0; // 0 = none
     };
 
     GLCompositor CurGLCompositor;
@@ -99,6 +105,7 @@ private:
 
     GLuint RenderShader[16] {};
     GLuint CurShaderID = -1;
+    GLint UseReplUniform[16] {};
 
     GLuint FinalPassEdgeShader {};
     GLuint FinalPassFogShader {};
@@ -160,6 +167,11 @@ private:
 
     GLuint MainFramebuffer {}, DownscaleFramebuffer {};
     u32 Framebuffer[256*192] {};
+
+    // Cache for GL textures created from replacement images
+    std::unordered_map<std::string, GLuint> HiresTexCache;
+    std::unordered_map<u64, GLuint> ClassicReplByTexParam;
+    std::unordered_set<u64> ClassicNoReplByTexParam;
 };
 }
 #endif

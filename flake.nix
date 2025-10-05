@@ -1,5 +1,5 @@
 {
-  description = "Nintendo DS emulator";
+  description = "Nintendo DS emulator (HD fork of melonDS)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -20,7 +20,7 @@
         else sourceInfo.shortRev;
 
       melonDS = pkgs.stdenv.mkDerivation {
-        pname = "melonDS";
+        pname = "melonDSHD";
         version = "1.0-${shortRevision}";
         src = ./.;
 
@@ -65,8 +65,8 @@
 
         passthru = {
           exePath = if isDarwin then
-            "/Applications/melonDS.app/Contents/MacOS/melonDS"
-            else "/bin/melonDS";
+            "/Applications/melonDSHD.app/Contents/MacOS/melonDSHD"
+            else "/bin/melonDSHD";
         };
       };
     in {

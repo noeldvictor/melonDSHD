@@ -353,7 +353,7 @@ void EmuSettingsDialog::on_btnFirmwareBrowse_clicked()
 
     if (!Platform::CheckFileWritable(file.toStdString()))
     {
-        QMessageBox::critical(this, "melonDS", "Unable to write to firmware file.\nPlease check file/folder write permissions.");
+        QMessageBox::critical(this, "melonDSHD", "Unable to write to firmware file.\nPlease check file/folder write permissions.");
         return;
     }
 
@@ -415,7 +415,7 @@ void EmuSettingsDialog::on_btnDLDISDBrowse_clicked()
 
     if (!Platform::CheckFileWritable(file.toStdString()))
     {
-        QMessageBox::critical(this, "melonDS", "Unable to write to DLDI SD image.\nPlease check file/folder write permissions.");
+        QMessageBox::critical(this, "melonDSHD", "Unable to write to DLDI SD image.\nPlease check file/folder write permissions.");
         return;
     }
 
@@ -453,7 +453,7 @@ void EmuSettingsDialog::on_btnDSiFirmwareBrowse_clicked()
 
     if (!Platform::CheckFileWritable(file.toStdString()))
     {
-        QMessageBox::critical(this, "melonDS", "Unable to write to DSi firmware file.\nPlease check file/folder write permissions.");
+        QMessageBox::critical(this, "melonDSHD", "Unable to write to DSi firmware file.\nPlease check file/folder write permissions.");
         return;
     }
 
@@ -474,7 +474,7 @@ void EmuSettingsDialog::on_btnDSiNANDBrowse_clicked()
 
     if (!Platform::CheckFileWritable(file.toStdString()))
     {
-        QMessageBox::critical(this, "melonDS", "Unable to write to DSi NAND image.\nPlease check file/folder write permissions.");
+        QMessageBox::critical(this, "melonDSHD", "Unable to write to DSi NAND image.\nPlease check file/folder write permissions.");
         return;
     }
 
@@ -509,7 +509,7 @@ void EmuSettingsDialog::on_btnDSiSDBrowse_clicked()
 
     if (!Platform::CheckFileWritable(file.toStdString()))
     {
-        QMessageBox::critical(this, "melonDS", "Unable to write to DSi SD image.\nPlease check file/folder write permissions.");
+        QMessageBox::critical(this, "melonDSHD", "Unable to write to DSi SD image.\nPlease check file/folder write permissions.");
         return;
     }
 

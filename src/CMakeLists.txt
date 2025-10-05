@@ -94,7 +94,9 @@ if (ENABLE_OGLRENDERER)
         GPU3D_TexcacheOpenGL.cpp
         GPU3D_TexcacheOpenGL.h
         GPU3D_OpenGL_shaders.h
-        OpenGLSupport.cpp)
+        OpenGLSupport.cpp
+        video/hirez/TexDump.cpp
+        video/hirez/TexDump.h)
 
     target_compile_definitions(core PUBLIC OGLRENDERER_ENABLED)
 endif()
@@ -148,9 +150,12 @@ if (ENABLE_JIT)
     endif()
 endif()
 
-target_include_directories(core INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+# Ensure core can include headers relative to src (e.g., frontend/glad/glad.h)
+target_include_directories(core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 
 set(MELONDS_VERSION_SUFFIX "$ENV{MELONDS_VERSION_SUFFIX}" CACHE STRING "Suffix to add to displayed melonDS version")
+# Override homepage URL for the forked build branding
+set(melonDS_HOMEPAGE_URL "https://github.com/noeldvictor/melonDSHD" CACHE STRING "Homepage URL for this fork" FORCE)
 option(MELONDS_EMBED_BUILD_INFO "Embed detailed build info into the binary" OFF)
 set(MELONDS_GIT_BRANCH "$ENV{MELONDS_GIT_BRANCH}" CACHE STRING "The Git branch used for this build")
 set(MELONDS_GIT_HASH "$ENV{MELONDS_GIT_HASH}" CACHE STRING "The hash of the Git commit")
@@ -225,4 +230,3 @@ endif()
 #    BEFORE PUBLIC -fsanitize=undefined PUBLIC -fsanitize=address
 #  )
 #endif()
-

@@ -8,9 +8,10 @@
 // and that all targets get the same MELONDS_GL_HEADER definition.
 
 #ifndef MELONDS_GL_HEADER
-#define MELONDS_GL_HEADER "\"frontend/glad/glad.h\""
-#endif
-
+// Default to bundled glad header (search via include dirs)
+#include <frontend/glad/glad.h>
+#else
 #include MELONDS_GL_HEADER
+#endif
 
 #endif

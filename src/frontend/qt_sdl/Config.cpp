@@ -39,7 +39,7 @@ namespace Config
 using namespace melonDS;
 
 
-const char* kConfigFile = "melonDS.toml";
+const char* kConfigFile = "melonDSHD.toml";
 
 const char* kLegacyConfigFile = "melonDS.ini";
 const char* kLegacyUniqueConfigFile = "melonDS.%d.ini";
@@ -117,7 +117,7 @@ DefaultList<std::string> DefaultStrings =
 {
     {"DLDI.ImagePath",                  "dldi.bin"},
     {"DSi.SD.ImagePath",                "dsisd.bin"},
-    {"Instance*.Firmware.Username",     "melonDS"}
+    {"Instance*.Firmware.Username",     "melonDSHD"}
 };
 
 DefaultList<double> DefaultDoubles =

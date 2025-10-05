@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=melonDSHD
+GenericName=Nintendo DS Emulator (HD fork)
+Comment=An unofficial HD-focused fork of the melonDS emulator. Experimental and unsupported.
+Exec=melonDSHD %f
+Type=Application
+Categories=Game;Emulator;
+Terminal=false
+Icon=io.github.noeldvictor.melonDSHD
+MimeType=application/x-nintendo-ds-rom;
+Keywords=emulator;Nintendo;DS;NDS;Nintendo DS;HD;

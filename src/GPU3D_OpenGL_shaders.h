@@ -244,6 +244,8 @@ const char* kRenderFSCommon = R"(
 
 uniform usampler2D TexMem;
 uniform sampler2D TexPalMem;
+uniform sampler2D ReplacementTex;
+uniform int uUseReplacement;
 
 layout(std140) uniform uConfig
 {
@@ -619,7 +621,15 @@ vec4 FinalColor()
     }
     else
     {
-        vec4 tcol = TextureLookup_Nearest(fTexcoord);
+        vec4 tcol;
+        if (uUseReplacement != 0) {
+            int tw = 8 << ((int(fPolygonAttr.y) >> 20) & 0x7);
+            int th = 8 << ((int(fPolygonAttr.y) >> 23) & 0x7);
+            vec2 uv = fTexcoord / vec2(float(tw), float(th));
+            tcol = texture(ReplacementTex, uv);
+        } else {
+            tcol = TextureLookup_Nearest(fTexcoord);
+        }
         //vec4 tcol = TextureLookup_Linear(fTexcoord);
 
         if ((blendmode & 1) != 0)

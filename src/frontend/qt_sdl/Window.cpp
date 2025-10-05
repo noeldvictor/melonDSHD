@@ -262,7 +262,7 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
 
     showOSD = windowCfg.GetBool("ShowOSD");
 
-    setWindowTitle("melonDS " MELONDS_VERSION);
+    setWindowTitle("melonDSHD " MELONDS_VERSION);
     setAttribute(Qt::WA_DeleteOnClose);
     setAcceptDrops(true);
     setFocusPolicy(Qt::ClickFocus);
@@ -1034,7 +1034,7 @@ void MainWindow::dropEvent(QDropEvent* event)
     {
         if (!emuThread->bootROM(file, errorstr))
         {
-            QMessageBox::critical(this, "melonDS", errorstr);
+            QMessageBox::critical(this, "melonDSHD", errorstr);
             return;
         }
 
@@ -1049,7 +1049,7 @@ void MainWindow::dropEvent(QDropEvent* event)
     {
         if (!emuThread->insertCart(file, true, errorstr))
         {
-            QMessageBox::critical(this, "melonDS", errorstr);
+            QMessageBox::critical(this, "melonDSHD", errorstr);
             return;
         }
 
@@ -1057,7 +1057,7 @@ void MainWindow::dropEvent(QDropEvent* event)
     }
     else
     {
-        QMessageBox::critical(this, "melonDS", "The file could not be recognized as a DS or GBA ROM.");
+        QMessageBox::critical(this, "melonDSHD", "The file could not be recognized as a DS or GBA ROM.");
         return;
     }
 }
@@ -1108,7 +1108,7 @@ bool MainWindow::verifySetup()
     QString res = emuInstance->verifySetup();
     if (!res.isEmpty())
     {
-         QMessageBox::critical(this, "melonDS", res);
+         QMessageBox::critical(this, "melonDSHD", res);
          return false;
     }
 
@@ -1132,7 +1132,7 @@ bool MainWindow::preloadROMs(QStringList file, QStringList gbafile, bool boot)
     {
         if (!emuThread->insertCart(gbafile, true, errorstr))
         {
-            QMessageBox::critical(this, "melonDS", errorstr);
+            QMessageBox::critical(this, "melonDSHD", errorstr);
             return false;
         }
 
@@ -1146,7 +1146,7 @@ bool MainWindow::preloadROMs(QStringList file, QStringList gbafile, bool boot)
         {
             if (!emuThread->bootROM(file, errorstr))
             {
-                QMessageBox::critical(this, "melonDS", errorstr);
+                QMessageBox::critical(this, "melonDSHD", errorstr);
                 return false;
             }
         }
@@ -1154,7 +1154,7 @@ bool MainWindow::preloadROMs(QStringList file, QStringList gbafile, bool boot)
         {
             if (!emuThread->insertCart(file, false, errorstr))
             {
-                QMessageBox::critical(this, "melonDS", errorstr);
+                QMessageBox::critical(this, "melonDSHD", errorstr);
                 return false;
             }
         }
@@ -1168,7 +1168,7 @@ bool MainWindow::preloadROMs(QStringList file, QStringList gbafile, bool boot)
     {
         if (!emuThread->bootFirmware(errorstr))
         {
-            QMessageBox::critical(this, "melonDS", errorstr);
+            QMessageBox::critical(this, "melonDSHD", errorstr);
             return false;
         }
     }
@@ -1190,7 +1190,7 @@ QStringList MainWindow::splitArchivePath(const QString& filename, bool useMember
         const QStringList filenameParts = filename.split('|');
         if (filenameParts.size() > 2)
         {
-            QMessageBox::warning(this, "melonDS", "This path contains too many '|'.");
+            QMessageBox::warning(this, "melonDSHD", "This path contains too many '|'.");
             return {};
         }
 
@@ -1199,14 +1199,14 @@ QStringList MainWindow::splitArchivePath(const QString& filename, bool useMember
             const QString archive = filenameParts.at(0);
             if (!QFileInfo(archive).exists())
             {
-                QMessageBox::warning(this, "melonDS", "This archive does not exist.");
+                QMessageBox::warning(this, "melonDSHD", "This archive does not exist.");
                 return {};
             }
 
             const QString subfile = filenameParts.at(1);
             if (!Archive::ListArchive(archive).contains(subfile))
             {
-                QMessageBox::warning(this, "melonDS", "This archive does not contain the desired file.");
+                QMessageBox::warning(this, "melonDSHD", "This archive does not contain the desired file.");
                 return {};
             }
 
@@ -1217,7 +1217,7 @@ QStringList MainWindow::splitArchivePath(const QString& filename, bool useMember
 
     if (!QFileInfo(filename).exists())
     {
-        QMessageBox::warning(this, "melonDS", "This ROM file does not exist.");
+        QMessageBox::warning(this, "melonDSHD", "This ROM file does not exist.");
         return {};
     }
 
@@ -1243,9 +1243,9 @@ QString MainWindow::pickFileFromArchive(QString archiveFileName)
     if (archiveROMList.size() <= 1)
     {
         if (!archiveROMList.isEmpty() && archiveROMList.at(0) == "OK")
-            QMessageBox::warning(this, "melonDS", "This archive is empty.");
+            QMessageBox::warning(this, "melonDSHD", "This archive is empty.");
         else
-            QMessageBox::critical(this, "melonDS", "This archive could not be read. It may be corrupt or you don't have the permissions.");
+            QMessageBox::critical(this, "melonDSHD", "This archive could not be read. It may be corrupt or you don't have the permissions.");
         return QString();
     }
 
@@ -1263,7 +1263,7 @@ QString MainWindow::pickFileFromArchive(QString archiveFileName)
 
     if (archiveROMList.isEmpty())
     {
-        QMessageBox::warning(this, "melonDS", "This archive does not contain any supported ROMs.");
+        QMessageBox::warning(this, "melonDSHD", "This archive does not contain any supported ROMs.");
         return QString();
     }
 
@@ -1272,7 +1272,7 @@ QString MainWindow::pickFileFromArchive(QString archiveFileName)
 
     bool ok;
     const QString toLoad = QInputDialog::getItem(
-        this, "melonDS",
+        this, "melonDSHD",
         "This archive contains multiple files. Select which ROM you want to load.",
         archiveROMList.toList(), 0, false, &ok
     );
@@ -1371,7 +1371,7 @@ void MainWindow::onOpenFile()
     QString errorstr;
     if (!emuThread->bootROM(file, errorstr))
     {
-        QMessageBox::critical(this, "melonDS", errorstr);
+        QMessageBox::critical(this, "melonDSHD", errorstr);
         return;
     }
 
@@ -1484,7 +1484,7 @@ void MainWindow::onClickRecentFile()
     QString errorstr;
     if (!emuThread->bootROM(file, errorstr))
     {
-        QMessageBox::critical(this, "melonDS", errorstr);
+        QMessageBox::critical(this, "melonDSHD", errorstr);
         return;
     }
 
@@ -1503,7 +1503,7 @@ void MainWindow::onBootFirmware()
     QString errorstr;
     if (!emuThread->bootFirmware(errorstr))
     {
-        QMessageBox::critical(this, "melonDS", errorstr);
+        QMessageBox::critical(this, "melonDSHD", errorstr);
         return;
     }
 }
@@ -1517,7 +1517,7 @@ void MainWindow::onInsertCart()
     QString errorstr;
     if (!emuThread->insertCart(file, false, errorstr))
     {
-        QMessageBox::critical(this, "melonDS", errorstr);
+        QMessageBox::critical(this, "melonDSHD", errorstr);
         return;
     }
 
@@ -1539,7 +1539,7 @@ void MainWindow::onInsertGBACart()
     QString errorstr;
     if (!emuThread->insertCart(file, true, errorstr))
     {
-        QMessageBox::critical(this, "melonDS", errorstr);
+        QMessageBox::critical(this, "melonDSHD", errorstr);
         return;
     }
 
@@ -1554,7 +1554,7 @@ void MainWindow::onInsertGBAAddon()
     QString errorstr;
     if (!emuThread->insertGBAAddon(type, errorstr))
     {
-        QMessageBox::critical(this, "melonDS", errorstr);
+        QMessageBox::critical(this, "melonDSHD", errorstr);
         return;
     }
 
@@ -1583,7 +1583,7 @@ void MainWindow::onSaveState()
         filename = QFileDialog::getSaveFileName(this,
                                                          "Save state",
                                                          globalCfg.GetQString("LastROMFolder"),
-                                                         "melonDS savestates (*.mln);;Any file (*.*)");
+                                                         "melonDSHD savestates (*.mln);;Any file (*.*)");
         emuThread->emuUnpause();
         if (filename.isEmpty())
             return;
@@ -1618,7 +1618,7 @@ void MainWindow::onLoadState()
         filename = QFileDialog::getOpenFileName(this,
                                                          "Load state",
                                                          globalCfg.GetQString("LastROMFolder"),
-                                                         "melonDS savestates (*.ml*);;Any file (*.*)");
+                                                         "melonDSHD savestates (*.ml*);;Any file (*.*)");
         emuThread->emuUnpause();
         if (filename.isEmpty())
             return;
@@ -1664,14 +1664,14 @@ void MainWindow::onImportSavefile()
 
     if (!Platform::FileExists(path.toStdString()))
     {
-        QMessageBox::critical(this, "melonDS", "Could not open the given savefile.");
+        QMessageBox::critical(this, "melonDSHD", "Could not open the given savefile.");
         return;
     }
 
     if (emuThread->emuIsActive())
     {
         if (QMessageBox::warning(this,
-                        "melonDS",
+                        "melonDSHD",
                         "The emulation will be reset and the current savefile overwritten.",
                         QMessageBox::Ok, QMessageBox::Cancel) != QMessageBox::Ok)
         {
@@ -1681,7 +1681,7 @@ void MainWindow::onImportSavefile()
 
     if (!emuThread->importSavefile(path))
     {
-        QMessageBox::critical(this, "melonDS", "Could not import the given savefile.");
+        QMessageBox::critical(this, "melonDSHD", "Could not import the given savefile.");
         return;
     }
 }
@@ -1844,7 +1844,7 @@ bool MainWindow::lanWarning(bool host)
             "If you "+verb+" a LAN game now, all secondary instances will be closed.\n\n"
             "Do you wish to continue?";
 
-    auto res = QMessageBox::warning(this, "melonDS", msg, QMessageBox::Yes|QMessageBox::No, QMessageBox::No);
+    auto res = QMessageBox::warning(this, "melonDSHD", msg, QMessageBox::Yes|QMessageBox::No, QMessageBox::No);
     if (res == QMessageBox::No)
         return false;
 

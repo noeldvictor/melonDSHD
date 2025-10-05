@@ -23,7 +23,7 @@
    </size>
   </property>
   <property name="windowTitle">
-   <string>About melonDS</string>
+   <string>About melonDSHD</string>
   </property>
   <property name="modal">
    <bool>false</bool>
@@ -108,12 +108,22 @@
           </font>
          </property>
          <property name="text">
-          <string>melonDS</string>
+          <string>melonDSHD</string>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="lblVersionInfo">
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="lblForkNote">
+        <property name="text">
+         <string>Unofficial HD-focused fork of melonDS. We are grateful to the original melonDS team.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="lblVersionInfo">
          <property name="enabled">
           <bool>true</bool>
          </property>
@@ -131,7 +141,7 @@
           <bool>true</bool>
          </property>
          <property name="text">
-          <string>By Arisotura, the melonDS team &lt;a href=&quot;https://github.com/melonDS-emu/melonDS/graphs/contributors&quot;&gt;and contributors&lt;/a&gt;.</string>
+          <string>Original melonDS by Arisotura, the melonDS team &lt;a href=&quot;https://github.com/melonDS-emu/melonDS/graphs/contributors&quot;&gt;and contributors&lt;/a&gt;. This project is an &lt;b&gt;unofficial HD-focused fork&lt;/b&gt; and is not affiliated with the original team.</string>
          </property>
          <property name="openExternalLinks">
           <bool>true</bool>
@@ -162,7 +172,7 @@
           </font>
          </property>
          <property name="text">
-          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Licensed under the GNU General Public License v3 or any newer version.&lt;/p&gt;&lt;p&gt;melonDS is intended only for use with software that you own.&lt;/p&gt;&lt;p&gt;The Nintendo DS and Nintendo DSi systems are the property of Nintendo.&lt;br /&gt;melonDS and the melonDS team are not affiliated with or endorsed by Nintendo.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Licensed under the GNU General Public License v3 or any newer version.&lt;/p&gt;&lt;p&gt;melonDS is intended only for use with software that you own.&lt;/p&gt;&lt;p&gt;The Nintendo DS and Nintendo DSi systems are the property of Nintendo.&lt;br /&gt;melonDS and the melonDS team are not affiliated with or endorsed by Nintendo.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Important:&lt;/b&gt; melonDSHD is a &lt;i&gt;very rough, experimental&lt;/i&gt; HD-focused fork maintained as a side project. We truly appreciate the &lt;b&gt;core melonDS team&lt;/b&gt;; please &lt;b&gt;do not contact them&lt;/b&gt; about issues with this fork — use this repository’s issue tracker. The maintainer is busy and may be unresponsive; &lt;b&gt;no promises of future development or features&lt;/b&gt;. If someone else wants to take over and finish it, contributions are welcome.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
          </property>
          <property name="textFormat">
           <enum>Qt::TextFormat::RichText</enum>

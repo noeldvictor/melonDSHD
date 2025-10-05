@@ -14,14 +14,14 @@ FILETYPE VFT_APP
 	{
 		BLOCK "040904E4"
 		{
-			VALUE "CompanyName", "Melon Factory of Kuribo64"
+            VALUE "CompanyName", "melonDSHD community"
 			VALUE "FileVersion", "${melonDS_VERSION}"
-			VALUE "FileDescription", "melonDS emulator"
+            VALUE "FileDescription", "melonDSHD emulator (unofficial fork)"
 			VALUE "InternalName", "SDnolem"
 			VALUE "LegalCopyright", "2016-2025 melonDS team"
 			VALUE "LegalTrademarks", ""
-			VALUE "OriginalFilename", "melonDS.exe"
-			VALUE "ProductName", "melonDS"
+            VALUE "OriginalFilename", "melonDSHD.exe"
+            VALUE "ProductName", "melonDSHD"
 			VALUE "ProductVersion", "${melonDS_VERSION}"
 		}
 	}

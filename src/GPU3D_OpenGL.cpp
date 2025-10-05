@@ -24,6 +24,8 @@
 #include "NDS.h"
 #include "GPU.h"
 #include "GPU3D_OpenGL_shaders.h"
+#include "GPU3D_Texcache.h"
+#include "video/hirez/TexDump.h"
 
 namespace melonDS
 {
@@ -63,6 +65,10 @@ bool GLRenderer::BuildRenderShader(u32 flags, const std::string& vs, const std::
     glUniform1i(uni_id, 0);
     uni_id = glGetUniformLocation(prog, "TexPalMem");
     glUniform1i(uni_id, 1);
+    uni_id = glGetUniformLocation(prog, "ReplacementTex");
+    glUniform1i(uni_id, 2);
+    UseReplUniform[flags] = glGetUniformLocation(prog, "uUseReplacement");
+    if (UseReplUniform[flags] >= 0) glUniform1i(UseReplUniform[flags], 0);
 
     RenderShader[flags] = prog;
 
@@ -997,7 +1003,25 @@ void GLRenderer::RenderSceneChunk(const GPU3D& gpu3d, int y, int h)
 
                     glDepthMask(GL_TRUE);
 
-                    RenderSinglePolygon(i);
+                    // If this polygon has a replacement texture, draw it alone with replacement bound
+                    if (PolygonList[i].ReplTexID && UseReplUniform[flags] >= 0)
+                    {
+                        glActiveTexture(GL_TEXTURE2);
+                        glBindTexture(GL_TEXTURE_2D, PolygonList[i].ReplTexID);
+                        // Setup wrap modes from TexParam
+                        u32 attr = PolygonList[i].PolyData->TexParam;
+                        bool wrapS = (attr >> 16) & 1; bool wrapT = (attr >> 17) & 1;
+                        bool mirrorS = (attr >> 18) & 1; bool mirrorT = (attr >> 19) & 1;
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS ? (mirrorS ? GL_MIRRORED_REPEAT : GL_REPEAT) : GL_CLAMP_TO_EDGE);
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT ? (mirrorT ? GL_MIRRORED_REPEAT : GL_REPEAT) : GL_CLAMP_TO_EDGE);
+                        glUniform1i(UseReplUniform[flags], 1);
+                        RenderSinglePolygon(i);
+                        glUniform1i(UseReplUniform[flags], 0);
+                    }
+                    else
+                    {
+                        RenderSinglePolygon(i);
+                    }
                 }
 
                 UseRenderShader(flags | RenderFlag_Trans);
@@ -1016,7 +1040,23 @@ void GLRenderer::RenderSceneChunk(const GPU3D& gpu3d, int y, int h)
                     glStencilOp(GL_KEEP, GL_KEEP, GL_ZERO);
                     glStencilMask(0x80);
 
-                    RenderSinglePolygon(i);
+                    if (PolygonList[i].ReplTexID && UseReplUniform[flags | RenderFlag_Trans] >= 0)
+                    {
+                        glActiveTexture(GL_TEXTURE2);
+                        glBindTexture(GL_TEXTURE_2D, PolygonList[i].ReplTexID);
+                        u32 attr = PolygonList[i].PolyData->TexParam;
+                        bool wrapS = (attr >> 16) & 1; bool wrapT = (attr >> 17) & 1;
+                        bool mirrorS = (attr >> 18) & 1; bool mirrorT = (attr >> 19) & 1;
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS ? (mirrorS ? GL_MIRRORED_REPEAT : GL_REPEAT) : GL_CLAMP_TO_EDGE);
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT ? (mirrorT ? GL_MIRRORED_REPEAT : GL_REPEAT) : GL_CLAMP_TO_EDGE);
+                        glUniform1i(UseReplUniform[flags | RenderFlag_Trans], 1);
+                        RenderSinglePolygon(i);
+                        glUniform1i(UseReplUniform[flags | RenderFlag_Trans], 0);
+                    }
+                    else
+                    {
+                        RenderSinglePolygon(i);
+                    }
 
                     glEnable(GL_BLEND);
                     glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -1044,7 +1084,36 @@ void GLRenderer::RenderSceneChunk(const GPU3D& gpu3d, int y, int h)
                     if (polyattr & (1<<11)) glDepthMask(GL_TRUE);
                     else                    glDepthMask(GL_FALSE);
 
-                    i += needopaque ? RenderSinglePolygon(i) : RenderPolygonBatch(i);
+                    if (PolygonList[i].ReplTexID)
+                    {
+                        // Draw as single polygon to bind replacement
+                        if (needopaque)
+                        {
+                            // shouldn't happen in this branch, but keep consistent
+                            i += RenderSinglePolygon(i);
+                        }
+                        else
+                        {
+                            // bind replacement
+                            if (UseReplUniform[flags | RenderFlag_Trans] >= 0)
+                            {
+                                glActiveTexture(GL_TEXTURE2);
+                                glBindTexture(GL_TEXTURE_2D, PolygonList[i].ReplTexID);
+                                u32 attr = PolygonList[i].PolyData->TexParam;
+                                bool wrapS = (attr >> 16) & 1; bool wrapT = (attr >> 17) & 1;
+                                bool mirrorS = (attr >> 18) & 1; bool mirrorT = (attr >> 19) & 1;
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS ? (mirrorS ? GL_MIRRORED_REPEAT : GL_REPEAT) : GL_CLAMP_TO_EDGE);
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT ? (mirrorT ? GL_MIRRORED_REPEAT : GL_REPEAT) : GL_CLAMP_TO_EDGE);
+                                glUniform1i(UseReplUniform[flags | RenderFlag_Trans], 1);
+                            }
+                            i += RenderSinglePolygon(i);
+                            if (UseReplUniform[flags | RenderFlag_Trans] >= 0) glUniform1i(UseReplUniform[flags | RenderFlag_Trans], 0);
+                        }
+                    }
+                    else
+                    {
+                        i += needopaque ? RenderSinglePolygon(i) : RenderPolygonBatch(i);
+                    }
                 }
             }
             else
@@ -1274,6 +1343,123 @@ void GLRenderer::RenderFrame(GPU& gpu)
         NumOpaqueFinalPolys = firsttrans;
 
         BuildPolygons(&PolygonList[0], npolys);
+        
+        // High-res replacement detection for classic GL (UI toggle via module)
+        // Only when texture mapping is enabled
+        if (melonDS::hires::ReplaceEnabled())
+        {
+            for (int i = 0; i < NumFinalPolys; i++)
+            {
+                RendererPolygon* rp = &PolygonList[i];
+                Polygon* poly = rp->PolyData;
+                if (!poly) continue;
+                u32 attr = poly->TexParam;
+                // Skip if no texture or texture mapping disabled
+                if ((((attr >> 26) & 0x7) == 0) || ((gpu.GPU3D.RenderDispCnt & (1<<0)) == 0))
+                    continue;
+
+                u32 width = 8u << ((attr >> 20) & 0x7);
+                u32 height = 8u << ((attr >> 23) & 0x7);
+                u32 addr = (attr & 0xFFFF) * 8u;
+                u32 palBase = poly->TexPalette;
+                u32 fmt = (attr >> 26) & 0x7;
+
+                u64 dsKey = (attr & ~0xC00F0000u) | (u64(palBase) << 32);
+                auto itCR = ClassicReplByTexParam.find(dsKey);
+                if (itCR != ClassicReplByTexParam.end())
+                {
+                    rp->ReplTexID = itCR->second;
+                    if (rp->ReplTexID) rp->RenderKey |= 0x80000000u;
+                    continue;
+                }
+                if (ClassicNoReplByTexParam.find(dsKey) != ClassicNoReplByTexParam.end())
+                {
+                    continue;
+                }
+
+                // Decode to RGBA8 using the shared converters
+                std::vector<u32> rgba(width*height);
+                if (fmt == 7)
+                {
+                    ConvertBitmapTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, gpu);
+                }
+                else if (fmt == 5)
+                {
+                    u32 slot1addr = 0x20000 + ((addr & 0x1FFFC) >> 1);
+                    if (addr >= 0x40000)
+                        slot1addr += 0x10000;
+                    u32 palAddr = palBase*16;
+                    ConvertCompressedTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, slot1addr, palAddr, gpu);
+                }
+                else
+                {
+                    u32 palAddr = palBase*16;
+                    bool color0Transparent = attr & (1 << 29);
+                    switch (fmt)
+                    {
+                        case 1: ConvertAXIYTexture<outputFmt_RGBA8, 3, 5>(width, height, rgba.data(), addr, palAddr, gpu); break;
+                        case 6: ConvertAXIYTexture<outputFmt_RGBA8, 5, 3>(width, height, rgba.data(), addr, palAddr, gpu); break;
+                        case 2: ConvertNColorsTexture<outputFmt_RGBA8, 2>(width, height, rgba.data(), addr, palAddr >> 1, color0Transparent, gpu); break;
+                        case 3: ConvertNColorsTexture<outputFmt_RGBA8, 4>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
+                        case 4: ConvertNColorsTexture<outputFmt_RGBA8, 8>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
+                        default: break;
+                    }
+                }
+
+                // Map DS fmt to hires tag and flags
+                melonDS::hires::DsiTexFmt fmtTag = melonDS::hires::DsiTexFmt::Unknown;
+                switch (fmt) {
+                    case 7: fmtTag = melonDS::hires::DsiTexFmt::Direct; break;
+                    case 5: fmtTag = melonDS::hires::DsiTexFmt::Tex4x4; break;
+                    case 6: fmtTag = melonDS::hires::DsiTexFmt::A5I3; break;
+                    case 1: fmtTag = melonDS::hires::DsiTexFmt::A3I5; break;
+                    case 2: fmtTag = melonDS::hires::DsiTexFmt::Pal4; break;
+                    case 3: fmtTag = melonDS::hires::DsiTexFmt::Pal16; break;
+                    case 4: fmtTag = melonDS::hires::DsiTexFmt::Pal256; break;
+                    default: break;
+                }
+                bool pal0Transparent = (fmt >= 2 && fmt <= 4) && (attr & (1<<29));
+
+                // Dump and try replacement
+                const uint8_t* rgbaBytes = reinterpret_cast<const uint8_t*>(rgba.data());
+                auto key = melonDS::hires::MakeKey(rgbaBytes, width, height, false, pal0Transparent, fmtTag);
+                melonDS::hires::DumpIfEnabled(key, rgbaBytes, width, height);
+
+                std::vector<uint8_t> repl;
+                u32 rw=width, rh=height;
+                if (melonDS::hires::TryLoadReplacement(key, repl, rw, rh))
+                {
+                    // Accept only integer multiples
+                    if (rw % width == 0 && rh % height == 0 && (rw/width) == (rh/height))
+                    {
+                        std::string fname = melonDS::hires::KeyToFilename(key, melonDS::hires::TexDumpConfig{}.writePNG);
+                        GLuint texid = 0;
+                        auto it = HiresTexCache.find(fname);
+                        if (it != HiresTexCache.end())
+                        {
+                            texid = it->second;
+                        }
+                        else
+                        {
+                            glGenTextures(1, &texid);
+                            glBindTexture(GL_TEXTURE_2D, texid);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, repl.data());
+                            HiresTexCache.emplace(fname, texid);
+                        }
+                        rp->ReplTexID = texid;
+                        // Separate polygons with replacement from batches
+                        rp->RenderKey |= 0x80000000u;
+                        ClassicReplByTexParam.emplace(dsKey, texid);
+                    }
+                    else ClassicNoReplByTexParam.insert(dsKey);
+                }
+                else ClassicNoReplByTexParam.insert(dsKey);
+            }
+        }
         glBindBuffer(GL_ARRAY_BUFFER, VertexBufferID);
         glBufferSubData(GL_ARRAY_BUFFER, 0, NumVertices*7*4, VertexBuffer);
 

@@ -71,10 +71,18 @@ private slots:
     void on_cbxComputeHiResCoords_stateChanged(int state);
 
     void on_cbSoftwareThreaded_stateChanged(int state);
+    void on_cbHirezDump_stateChanged(int state);
+    void on_cbHirezReplace_stateChanged(int state);
 private:
     void setVsyncControlEnable(bool hasOGL);
-    void setEnabled();
+    void updateHirezPaths();
 
+private slots:
+    void on_btnOpenDumpFolder_clicked();
+    void on_btnOpenLoadFolder_clicked();
+
+private:
+    void setEnabled();
     Ui::VideoSettingsDialog* ui;
     EmuInstance* emuInstance;
 
@@ -91,4 +99,3 @@ private:
 };
 
 #endif // VIDEOSETTINGSDIALOG_H
-

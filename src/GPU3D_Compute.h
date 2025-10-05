@@ -29,6 +29,8 @@
 #include "GPU_OpenGL.h"
 
 #include "GPU3D_TexcacheOpenGL.h"
+#include <unordered_map>
+#include <unordered_set>
 
 #include "NonStupidBitfield.h"
 
@@ -235,6 +237,14 @@ private:
     void SetupYSpanDummy(RenderPolygon* rp, SpanSetupY* span, Polygon* poly, int vertex, int side, s32 positions[10][2]);
 
     bool CompileShader(GLuint& shader, const std::string& source, const std::initializer_list<const char*>& defines);
+
+    // High-res replacement support (compute):
+    //  - HiresReplTex caches GL textures keyed by generated filename
+    //  - HiresReplByTexParam maps DS texture identity (TexParam/Palette) to the replacement GL texture
+    // We use one-layer array textures per replacement to keep it simple.
+    std::unordered_map<std::string, GLuint> HiresReplTex;
+    std::unordered_map<u64, GLuint> HiresReplByTexParam;
+    std::unordered_set<u64> HiresNoReplByTexParam;
 };
 
 }

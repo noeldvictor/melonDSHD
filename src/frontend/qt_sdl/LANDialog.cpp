@@ -75,7 +75,7 @@ void LANStartHostDialog::done(int r)
     {
         if (ui->txtPlayerName->text().trimmed().isEmpty())
         {
-            QMessageBox::warning(this, "melonDS", "Please enter a player name.");
+            QMessageBox::warning(this, "melonDSHD", "Please enter a player name.");
             return;
         }
 
@@ -84,7 +84,7 @@ void LANStartHostDialog::done(int r)
 
         if (!lan().StartHost(player.c_str(), numplayers))
         {
-            QMessageBox::warning(this, "melonDS", "Failed to start LAN game.");
+            QMessageBox::warning(this, "melonDSHD", "Failed to start LAN game.");
             return;
         }
 
@@ -164,7 +164,7 @@ void LANStartClientDialog::onDirectConnect()
 {
     if (ui->txtPlayerName->text().trimmed().isEmpty())
     {
-        QMessageBox::warning(this, "melonDS", "Please enter a player name before connecting.");
+        QMessageBox::warning(this, "melonDSHD", "Please enter a player name before connecting.");
         return;
     }
 
@@ -179,7 +179,7 @@ void LANStartClientDialog::onDirectConnect()
     if (!lan().StartClient(player.c_str(), hostname.c_str()))
     {
         QString msg = QString("Failed to connect to the host %0.").arg(QString::fromStdString(hostname));
-        QMessageBox::warning(this, "melonDS", msg);
+        QMessageBox::warning(this, "melonDSHD", msg);
         setEnabled(true);
         lan().StartDiscovery();
         return;
@@ -202,7 +202,7 @@ void LANStartClientDialog::done(int r)
     {
         if (ui->txtPlayerName->text().trimmed().isEmpty())
         {
-            QMessageBox::warning(this, "melonDS", "Please enter a player name before connecting.");
+            QMessageBox::warning(this, "melonDSHD", "Please enter a player name before connecting.");
             return;
         }
 
@@ -222,7 +222,7 @@ void LANStartClientDialog::done(int r)
         if (!lan().StartClient(player.c_str(), hostname))
         {
             QString msg = QString("Failed to connect to the host %0.").arg(QString(hostname));
-            QMessageBox::warning(this, "melonDS", msg);
+            QMessageBox::warning(this, "melonDSHD", msg);
             setEnabled(true);
             lan().StartDiscovery();
             return;
@@ -337,7 +337,7 @@ void LANDialog::done(int r)
 
     if (showwarning)
     {
-        if (QMessageBox::warning(this, "melonDS", "Really leave this LAN game?",
+        if (QMessageBox::warning(this, "melonDSHD", "Really leave this LAN game?",
                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::No)
             return;
     }
