@@ -12,6 +12,17 @@ Unofficial HD-focused fork of melonDS. This project is not affiliated with or en
 
 The goal is take melonds and add the ability to play games with HD textures and sprites(one day). This is a very rough, experimental side project focused on HD features. Expect breakage and rapid changes; it may stall at any time.
 
+## Current HD Texture Status
+<p align="center"><img src="hd_zelda_intro.png" alt="Wind Waker intro texture upscaled" width="540"></p>
+
+HD texture replacement is partially working in the current builds. Expect the following rough edges while things are still experimental:
+
+- Replacement is stable for some scenes but can flicker in others as cache invalidation is still in flux.
+- Cutscenes and other story-driven scenes sometimes fall back to the original low-resolution textures.
+- Sprite replacement work is still TODO; only 3D texture swaps are attempted for now.
+
+If you run into other glitches, please open an issue with logs and reproduction steps so we can track down missing GPU state tracking.
+
 <hr>
 
 ## How to use
