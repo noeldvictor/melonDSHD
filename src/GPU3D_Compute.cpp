@@ -599,7 +599,13 @@ struct Variant
 void ComputeRenderer::RenderFrame(GPU& gpu)
 {
     assert(!NeedsShaderCompile());
-    if (!Texcache.Update(gpu) && gpu.GPU3D.RenderFrameIdentical)
+    bool texcacheChanged = Texcache.Update(gpu);
+    if (texcacheChanged)
+    {
+        HiresReplByTexParam.clear();
+        HiresNoReplByTexParam.clear();
+    }
+    if (!texcacheChanged && gpu.GPU3D.RenderFrameIdentical)
     {
         return;
     }
@@ -656,23 +662,40 @@ void ComputeRenderer::RenderFrame(GPU& gpu)
                 variant.Texture = 0;
                 variant.Sampler = 0;
                 u32* textureLastVariant = nullptr;
+                GLuint baseTexture = 0;
+                u32 baseTexLayer = 0;
+                bool hasBaseTexture = false;
+                u64 dsKey = 0;
+                bool replacementActive = false;
             // we always need to look up the texture to get the layer of the array texture
             if (enableTextureMaps && (polygon->TexParam >> 26) & 0x7)
             {
                 Texcache.GetTexture(gpu, polygon->TexParam, polygon->TexPalette, variant.Texture, prevTexLayer, textureLastVariant);
+                baseTexture = variant.Texture;
+                baseTexLayer = prevTexLayer;
+                hasBaseTexture = true;
+                dsKey = (polygon->TexParam & ~0xC00F0000u) | (u64(polygon->TexPalette) << 32);
+
                 bool wrapS = (polygon->TexParam >> 16) & 1;
                 bool wrapT = (polygon->TexParam >> 17) & 1;
                 bool mirrorS = (polygon->TexParam >> 18) & 1;
                 bool mirrorT = (polygon->TexParam >> 19) & 1;
                 variant.Sampler = Samplers[(wrapS ? (mirrorS ? 2 : 1) : 0) + (wrapT ? (mirrorT ? 2 : 1) : 0) * 3];
 
-                // If a replacement texture is already known for this DS texture, use it now
+                if (HiresNoReplByTexParam.find(dsKey) != HiresNoReplByTexParam.end())
                 {
-                    u64 dsKeyEarly = (polygon->TexParam & ~0xC00F0000u) | (u64(polygon->TexPalette) << 32);
-                    auto itRepl = HiresReplByTexParam.find(dsKeyEarly);
-                    if (itRepl != HiresReplByTexParam.end()) {
+                    HiresReplByTexParam.erase(dsKey);
+                    variant.Texture = baseTexture;
+                    prevTexLayer = baseTexLayer;
+                }
+                else
+                {
+                    auto itRepl = HiresReplByTexParam.find(dsKey);
+                    if (itRepl != HiresReplByTexParam.end())
+                    {
                         variant.Texture = itRepl->second;
                         prevTexLayer = 0;
+                        replacementActive = true;
                     }
                 }
 
@@ -682,120 +705,132 @@ void ComputeRenderer::RenderFrame(GPU& gpu)
                     prevVariant = *textureLastVariant;
 
                     // Attempt HD replacement even when reusing an existing variant
-                    if (melonDS::hires::ReplaceEnabled())
+                    if (melonDS::hires::ReplaceEnabled() && hasBaseTexture)
                     {
-                        u64 dsKey = (polygon->TexParam & ~0xC00F0000u) | (u64(polygon->TexPalette) << 32);
+                        bool loadedReplacement = false;
+                        bool markNoReplacement = true;
+
                         if (HiresNoReplByTexParam.find(dsKey) == HiresNoReplByTexParam.end())
                         {
-                        u32 width = TextureWidth(polygon->TexParam);
-                        u32 height = TextureHeight(polygon->TexParam);
-                        u32 addr = (polygon->TexParam & 0xFFFF) * 8;
-                        u32 palBaseLocal = polygon->TexPalette;
-                        u32 fmt = (polygon->TexParam >> 26) & 0x7;
+                            u32 width = TextureWidth(polygon->TexParam);
+                            u32 height = TextureHeight(polygon->TexParam);
+                            u32 addr = (polygon->TexParam & 0xFFFF) * 8;
+                            u32 palBaseLocal = polygon->TexPalette;
+                            u32 fmt = (polygon->TexParam >> 26) & 0x7;
 
-                        std::vector<u32> rgba(width*height);
-                        if (fmt == 7)
-                        {
-                            ConvertBitmapTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, gpu);
-                        }
-                        else if (fmt == 5)
-                        {
-                            u32 slot1addr = 0x20000 + ((addr & 0x1FFFC) >> 1);
-                            if (addr >= 0x40000)
-                                slot1addr += 0x10000;
-                            u32 palAddr = palBaseLocal*16;
-                            ConvertCompressedTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, slot1addr, palAddr, gpu);
-                        }
-                        else
-                        {
-                            u32 palAddr = palBaseLocal*16;
-                            bool color0Transparent = (polygon->TexParam & (1 << 29));
-                            switch (fmt)
+                            std::vector<u32> rgba(width*height);
+                            if (fmt == 7)
                             {
-                                case 1: ConvertAXIYTexture<outputFmt_RGBA8, 3, 5>(width, height, rgba.data(), addr, palAddr, gpu); break;
-                                case 6: ConvertAXIYTexture<outputFmt_RGBA8, 5, 3>(width, height, rgba.data(), addr, palAddr, gpu); break;
-                                case 2: ConvertNColorsTexture<outputFmt_RGBA8, 2>(width, height, rgba.data(), addr, palAddr >> 1, color0Transparent, gpu); break;
-                                case 3: ConvertNColorsTexture<outputFmt_RGBA8, 4>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
-                                case 4: ConvertNColorsTexture<outputFmt_RGBA8, 8>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
-                                default: break;
+                                ConvertBitmapTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, gpu);
                             }
-                        }
-
-                        melonDS::hires::DsiTexFmt fmtTag = melonDS::hires::DsiTexFmt::Unknown;
-                        switch (fmt) {
-                            case 7: fmtTag = melonDS::hires::DsiTexFmt::Direct; break;
-                            case 5: fmtTag = melonDS::hires::DsiTexFmt::Tex4x4; break;
-                            case 6: fmtTag = melonDS::hires::DsiTexFmt::A5I3; break;
-                            case 1: fmtTag = melonDS::hires::DsiTexFmt::A3I5; break;
-                            case 2: fmtTag = melonDS::hires::DsiTexFmt::Pal4; break;
-                            case 3: fmtTag = melonDS::hires::DsiTexFmt::Pal16; break;
-                            case 4: fmtTag = melonDS::hires::DsiTexFmt::Pal256; break;
-                            default: break;
-                        }
-                        bool pal0Transparent = (fmt >= 2 && fmt <= 4) && (polygon->TexParam & (1<<29));
-                        const uint8_t* rgbaBytes = reinterpret_cast<const uint8_t*>(rgba.data());
-                        auto key = melonDS::hires::MakeKey(rgbaBytes, width, height, false, pal0Transparent, fmtTag);
-
-                        std::vector<uint8_t> repl;
-                        u32 rw=width, rh=height;
-                        if (melonDS::hires::TryLoadReplacement(key, repl, rw, rh))
-                        {
-                            if ((rw % width) == 0 && (rh % height) == 0 && (rw/width) == (rh/height))
+                            else if (fmt == 5)
                             {
-                                std::string fname = melonDS::hires::KeyToFilename(key, melonDS::hires::TexDumpConfig{}.writePNG);
-                                GLuint texid = 0;
-                                auto it2 = HiresReplTex.find(fname);
-                                if (it2 != HiresReplTex.end())
-                                {
-                                    texid = it2->second;
-                                }
-                                else
-                                {
-                                    std::vector<uint8_t> packed;
-                                    packed.resize(size_t(rw)*rh*4);
-                                    for (size_t ii = 0, N = size_t(rw)*rh; ii < N; ++ii)
-                                    {
-                                        uint8_t r8 = repl[ii*4+0];
-                                        uint8_t g8 = repl[ii*4+1];
-                                        uint8_t b8 = repl[ii*4+2];
-                                        uint8_t a8 = repl[ii*4+3];
-                                        // Compute path expects RGB6A5 range (r,g,b in 0..63, a in 0..31)
-                                        uint8_t r6 = uint8_t((int(r8)*63 + 127) / 255);
-                                        uint8_t g6 = uint8_t((int(g8)*63 + 127) / 255);
-                                        uint8_t b6 = uint8_t((int(b8)*63 + 127) / 255);
-                                        uint8_t a5 = uint8_t((int(a8)*31 + 127) / 255);
-                                        packed[ii*4+0] = r6;
-                                        packed[ii*4+1] = g6;
-                                        packed[ii*4+2] = b6;
-                                        packed[ii*4+3] = a5;
-                                    }
-                                    glGenTextures(1, &texid);
-                                    glBindTexture(GL_TEXTURE_2D_ARRAY, texid);
-                                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                                    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8UI, rw, rh, 1);
-                                    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, rw, rh, 1, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, packed.data());
-                                    HiresReplTex.emplace(fname, texid);
-                                }
-                                if (texid)
-                                {
-                                    // Switch to replacement texture
-                                    variants[prevVariant].Texture = texid;
-                                    HiresReplByTexParam[dsKey] = texid;
-                                    prevTexLayer = 0;
-                                }
+                                u32 slot1addr = 0x20000 + ((addr & 0x1FFFC) >> 1);
+                                if (addr >= 0x40000)
+                                    slot1addr += 0x10000;
+                                u32 palAddr = palBaseLocal*16;
+                                ConvertCompressedTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, slot1addr, palAddr, gpu);
                             }
                             else
                             {
-                                HiresNoReplByTexParam.insert(dsKey);
+                                u32 palAddr = palBaseLocal*16;
+                                bool color0Transparent = (polygon->TexParam & (1 << 29));
+                                switch (fmt)
+                                {
+                                    case 1: ConvertAXIYTexture<outputFmt_RGBA8, 3, 5>(width, height, rgba.data(), addr, palAddr, gpu); break;
+                                    case 6: ConvertAXIYTexture<outputFmt_RGBA8, 5, 3>(width, height, rgba.data(), addr, palAddr, gpu); break;
+                                    case 2: ConvertNColorsTexture<outputFmt_RGBA8, 2>(width, height, rgba.data(), addr, palAddr >> 1, color0Transparent, gpu); break;
+                                    case 3: ConvertNColorsTexture<outputFmt_RGBA8, 4>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
+                                    case 4: ConvertNColorsTexture<outputFmt_RGBA8, 8>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
+                                    default: break;
+                                }
                             }
+
+                            melonDS::hires::DsiTexFmt fmtTag = melonDS::hires::DsiTexFmt::Unknown;
+                            switch (fmt) {
+                                case 7: fmtTag = melonDS::hires::DsiTexFmt::Direct; break;
+                                case 5: fmtTag = melonDS::hires::DsiTexFmt::Tex4x4; break;
+                                case 6: fmtTag = melonDS::hires::DsiTexFmt::A5I3; break;
+                                case 1: fmtTag = melonDS::hires::DsiTexFmt::A3I5; break;
+                                case 2: fmtTag = melonDS::hires::DsiTexFmt::Pal4; break;
+                                case 3: fmtTag = melonDS::hires::DsiTexFmt::Pal16; break;
+                                case 4: fmtTag = melonDS::hires::DsiTexFmt::Pal256; break;
+                                default: break;
+                            }
+                            bool pal0Transparent = (fmt >= 2 && fmt <= 4) && (polygon->TexParam & (1<<29));
+                            const uint8_t* rgbaBytes = reinterpret_cast<const uint8_t*>(rgba.data());
+                            auto key = melonDS::hires::MakeKey(rgbaBytes, width, height, false, pal0Transparent, fmtTag);
+
+                            std::vector<uint8_t> repl;
+                            u32 rw = width, rh = height;
+                            if (melonDS::hires::TryLoadReplacement(key, repl, rw, rh))
+                            {
+                                if ((rw % width) == 0 && (rh % height) == 0 && (rw/width) == (rh/height))
+                                {
+                                    std::string fname = melonDS::hires::KeyToFilename(key, melonDS::hires::TexDumpConfig{}.writePNG);
+                                    GLuint texid = 0;
+                                    auto it2 = HiresReplTex.find(fname);
+                                    if (it2 != HiresReplTex.end())
+                                    {
+                                        texid = it2->second;
+                                    }
+                                    else
+                                    {
+                                        std::vector<uint8_t> packed;
+                                        packed.resize(size_t(rw)*rh*4);
+                                        for (size_t ii = 0, N = size_t(rw)*rh; ii < N; ++ii)
+                                        {
+                                            uint8_t r8 = repl[ii*4+0];
+                                            uint8_t g8 = repl[ii*4+1];
+                                            uint8_t b8 = repl[ii*4+2];
+                                            uint8_t a8 = repl[ii*4+3];
+                                            uint8_t r6 = uint8_t((int(r8)*63 + 127) / 255);
+                                            uint8_t g6 = uint8_t((int(g8)*63 + 127) / 255);
+                                            uint8_t b6 = uint8_t((int(b8)*63 + 127) / 255);
+                                            uint8_t a5 = uint8_t((int(a8)*31 + 127) / 255);
+                                            packed[ii*4+0] = r6;
+                                            packed[ii*4+1] = g6;
+                                            packed[ii*4+2] = b6;
+                                            packed[ii*4+3] = a5;
+                                        }
+                                        glGenTextures(1, &texid);
+                                        glBindTexture(GL_TEXTURE_2D_ARRAY, texid);
+                                        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                                        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                                        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                                        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                                        glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8UI, rw, rh, 1);
+                                        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, rw, rh, 1, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, packed.data());
+                                        HiresReplTex.emplace(fname, texid);
+                                    }
+                                    if (texid)
+                                    {
+                                        // Switch to replacement texture
+                                        variants[prevVariant].Texture = texid;
+                                        variant.Texture = texid;
+                                        prevTexLayer = 0;
+                                        loadedReplacement = true;
+                                        markNoReplacement = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (loadedReplacement)
+                        {
+                            HiresReplByTexParam[dsKey] = variants[prevVariant].Texture;
+                            HiresNoReplByTexParam.erase(dsKey);
+                            replacementActive = true;
                         }
                         else
                         {
-                            HiresNoReplByTexParam.insert(dsKey);
-                        }
+                            HiresReplByTexParam.erase(dsKey);
+                            variants[prevVariant].Texture = baseTexture;
+                            variant.Texture = baseTexture;
+                            prevTexLayer = baseTexLayer;
+                            replacementActive = false;
+                            if (markNoReplacement)
+                                HiresNoReplByTexParam.insert(dsKey);
                         }
                     }
                 }
@@ -814,121 +849,132 @@ void ComputeRenderer::RenderFrame(GPU& gpu)
                     }
 
                     // No existing variant; attempt HD replacement and create a new one
-                    if (enableTextureMaps && (polygon->TexParam >> 26) & 0x7)
+                    if (enableTextureMaps && (polygon->TexParam >> 26) & 0x7 && hasBaseTexture)
                     {
-                        u64 dsKey = (polygon->TexParam & ~0xC00F0000u) | (u64(polygon->TexPalette) << 32);
+                        bool loadedReplacement = false;
+                        bool markNoReplacement = true;
+
                         if (HiresNoReplByTexParam.find(dsKey) == HiresNoReplByTexParam.end())
                         {
-                        // Decode DS texture to RGBA8 for key/dump
-                        u32 width = TextureWidth(polygon->TexParam);
-                        u32 height = TextureHeight(polygon->TexParam);
-                        u32 addr = (polygon->TexParam & 0xFFFF) * 8;
-                        u32 palBase = polygon->TexPalette;
-                        u32 fmt = (polygon->TexParam >> 26) & 0x7;
+                            // Decode DS texture to RGBA8 for key/dump
+                            u32 width = TextureWidth(polygon->TexParam);
+                            u32 height = TextureHeight(polygon->TexParam);
+                            u32 addr = (polygon->TexParam & 0xFFFF) * 8;
+                            u32 palBase = polygon->TexPalette;
+                            u32 fmt = (polygon->TexParam >> 26) & 0x7;
 
-                        std::vector<u32> rgba(width*height);
-                        if (fmt == 7)
-                        {
-                            ConvertBitmapTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, gpu);
-                        }
-                        else if (fmt == 5)
-                        {
-                            u32 slot1addr = 0x20000 + ((addr & 0x1FFFC) >> 1);
-                            if (addr >= 0x40000)
-                                slot1addr += 0x10000;
-                            u32 palAddr = palBase*16;
-                            ConvertCompressedTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, slot1addr, palAddr, gpu);
-                        }
-                        else
-                        {
-                            u32 palAddr = palBase*16;
-                            bool color0Transparent = (polygon->TexParam & (1 << 29));
-                            switch (fmt)
+                            std::vector<u32> rgba(width*height);
+                            if (fmt == 7)
                             {
-                                case 1: ConvertAXIYTexture<outputFmt_RGBA8, 3, 5>(width, height, rgba.data(), addr, palAddr, gpu); break;
-                                case 6: ConvertAXIYTexture<outputFmt_RGBA8, 5, 3>(width, height, rgba.data(), addr, palAddr, gpu); break;
-                                case 2: ConvertNColorsTexture<outputFmt_RGBA8, 2>(width, height, rgba.data(), addr, palAddr >> 1, color0Transparent, gpu); break;
-                                case 3: ConvertNColorsTexture<outputFmt_RGBA8, 4>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
-                                case 4: ConvertNColorsTexture<outputFmt_RGBA8, 8>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
-                                default: break;
+                                ConvertBitmapTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, gpu);
                             }
-                        }
-
-                        melonDS::hires::DsiTexFmt fmtTag = melonDS::hires::DsiTexFmt::Unknown;
-                        switch (fmt) {
-                            case 7: fmtTag = melonDS::hires::DsiTexFmt::Direct; break;
-                            case 5: fmtTag = melonDS::hires::DsiTexFmt::Tex4x4; break;
-                            case 6: fmtTag = melonDS::hires::DsiTexFmt::A5I3; break;
-                            case 1: fmtTag = melonDS::hires::DsiTexFmt::A3I5; break;
-                            case 2: fmtTag = melonDS::hires::DsiTexFmt::Pal4; break;
-                            case 3: fmtTag = melonDS::hires::DsiTexFmt::Pal16; break;
-                            case 4: fmtTag = melonDS::hires::DsiTexFmt::Pal256; break;
-                            default: break;
-                        }
-                        bool pal0Transparent = (fmt >= 2 && fmt <= 4) && (polygon->TexParam & (1<<29));
-                        const uint8_t* rgbaBytes = reinterpret_cast<const uint8_t*>(rgba.data());
-                        auto key = melonDS::hires::MakeKey(rgbaBytes, width, height, false, pal0Transparent, fmtTag);
-                        melonDS::hires::DumpIfEnabled(key, rgbaBytes, width, height);
-
-                        std::vector<uint8_t> repl;
-                        u32 rw=width, rh=height;
-                        if (melonDS::hires::TryLoadReplacement(key, repl, rw, rh))
-                        {
-                            if ((rw % width) == 0 && (rh % height) == 0 && (rw/width) == (rh/height))
+                            else if (fmt == 5)
                             {
-                                std::string fname = melonDS::hires::KeyToFilename(key, melonDS::hires::TexDumpConfig{}.writePNG);
-                                GLuint texid = 0;
-                                auto it = HiresReplTex.find(fname);
-                                if (it != HiresReplTex.end())
-                                {
-                                    texid = it->second;
-                                }
-                                else
-                                {
-                                    std::vector<uint8_t> packed;
-                                    packed.resize(size_t(rw)*rh*4);
-                                    for (size_t ii = 0, N = size_t(rw)*rh; ii < N; ++ii)
-                                    {
-                                        uint8_t r8 = repl[ii*4+0];
-                                        uint8_t g8 = repl[ii*4+1];
-                                        uint8_t b8 = repl[ii*4+2];
-                                        uint8_t a8 = repl[ii*4+3];
-                                        uint8_t r6 = uint8_t((int(r8)*63 + 127) / 255);
-                                        uint8_t g6 = uint8_t((int(g8)*63 + 127) / 255);
-                                        uint8_t b6 = uint8_t((int(b8)*63 + 127) / 255);
-                                        uint8_t a5 = uint8_t((int(a8)*31 + 127) / 255);
-                                        packed[ii*4+0] = r6;
-                                        packed[ii*4+1] = g6;
-                                        packed[ii*4+2] = b6;
-                                        packed[ii*4+3] = a5;
-                                    }
-                                    glGenTextures(1, &texid);
-                                    glBindTexture(GL_TEXTURE_2D_ARRAY, texid);
-                                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                                    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                                    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8UI, rw, rh, 1);
-                                    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, rw, rh, 1, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, packed.data());
-                                    HiresReplTex.emplace(fname, texid);
-                                }
-
-                                if (texid)
-                                {
-                                    variant.Texture = texid;
-                                    HiresReplByTexParam[dsKey] = texid;
-                                    prevTexLayer = 0;
-                                }
+                                u32 slot1addr = 0x20000 + ((addr & 0x1FFFC) >> 1);
+                                if (addr >= 0x40000)
+                                    slot1addr += 0x10000;
+                                u32 palAddr = palBase*16;
+                                ConvertCompressedTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, slot1addr, palAddr, gpu);
                             }
                             else
                             {
-                                HiresNoReplByTexParam.insert(dsKey);
+                                u32 palAddr = palBase*16;
+                                bool color0Transparent = (polygon->TexParam & (1 << 29));
+                                switch (fmt)
+                                {
+                                    case 1: ConvertAXIYTexture<outputFmt_RGBA8, 3, 5>(width, height, rgba.data(), addr, palAddr, gpu); break;
+                                    case 6: ConvertAXIYTexture<outputFmt_RGBA8, 5, 3>(width, height, rgba.data(), addr, palAddr, gpu); break;
+                                    case 2: ConvertNColorsTexture<outputFmt_RGBA8, 2>(width, height, rgba.data(), addr, palAddr >> 1, color0Transparent, gpu); break;
+                                    case 3: ConvertNColorsTexture<outputFmt_RGBA8, 4>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
+                                    case 4: ConvertNColorsTexture<outputFmt_RGBA8, 8>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
+                                    default: break;
+                                }
                             }
+
+                            melonDS::hires::DsiTexFmt fmtTag = melonDS::hires::DsiTexFmt::Unknown;
+                            switch (fmt) {
+                                case 7: fmtTag = melonDS::hires::DsiTexFmt::Direct; break;
+                                case 5: fmtTag = melonDS::hires::DsiTexFmt::Tex4x4; break;
+                                case 6: fmtTag = melonDS::hires::DsiTexFmt::A5I3; break;
+                                case 1: fmtTag = melonDS::hires::DsiTexFmt::A3I5; break;
+                                case 2: fmtTag = melonDS::hires::DsiTexFmt::Pal4; break;
+                                case 3: fmtTag = melonDS::hires::DsiTexFmt::Pal16; break;
+                                case 4: fmtTag = melonDS::hires::DsiTexFmt::Pal256; break;
+                                default: break;
+                            }
+                            bool pal0Transparent = (fmt >= 2 && fmt <= 4) && (polygon->TexParam & (1<<29));
+                            const uint8_t* rgbaBytes = reinterpret_cast<const uint8_t*>(rgba.data());
+                            auto key = melonDS::hires::MakeKey(rgbaBytes, width, height, false, pal0Transparent, fmtTag);
+                            melonDS::hires::DumpIfEnabled(key, rgbaBytes, width, height);
+
+                            std::vector<uint8_t> repl;
+                            u32 rw=width, rh=height;
+                            if (melonDS::hires::TryLoadReplacement(key, repl, rw, rh))
+                            {
+                                if ((rw % width) == 0 && (rh % height) == 0 && (rw/width) == (rh/height))
+                                {
+                                    std::string fname = melonDS::hires::KeyToFilename(key, melonDS::hires::TexDumpConfig{}.writePNG);
+                                    GLuint texid = 0;
+                                    auto it = HiresReplTex.find(fname);
+                                    if (it != HiresReplTex.end())
+                                    {
+                                        texid = it->second;
+                                    }
+                                    else
+                                    {
+                                        std::vector<uint8_t> packed;
+                                        packed.resize(size_t(rw)*rh*4);
+                                        for (size_t ii = 0, N = size_t(rw)*rh; ii < N; ++ii)
+                                        {
+                                            uint8_t r8 = repl[ii*4+0];
+                                            uint8_t g8 = repl[ii*4+1];
+                                            uint8_t b8 = repl[ii*4+2];
+                                            uint8_t a8 = repl[ii*4+3];
+                                            uint8_t r6 = uint8_t((int(r8)*63 + 127) / 255);
+                                            uint8_t g6 = uint8_t((int(g8)*63 + 127) / 255);
+                                            uint8_t b6 = uint8_t((int(b8)*63 + 127) / 255);
+                                            uint8_t a5 = uint8_t((int(a8)*31 + 127) / 255);
+                                            packed[ii*4+0] = r6;
+                                            packed[ii*4+1] = g6;
+                                            packed[ii*4+2] = b6;
+                                            packed[ii*4+3] = a5;
+                                        }
+                                        glGenTextures(1, &texid);
+                                        glBindTexture(GL_TEXTURE_2D_ARRAY, texid);
+                                        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                                        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                                        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                                        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                                        glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8UI, rw, rh, 1);
+                                        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, rw, rh, 1, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, packed.data());
+                                        HiresReplTex.emplace(fname, texid);
+                                    }
+
+                                    if (texid)
+                                    {
+                                        variant.Texture = texid;
+                                        prevTexLayer = 0;
+                                        loadedReplacement = true;
+                                        markNoReplacement = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (loadedReplacement)
+                        {
+                            HiresReplByTexParam[dsKey] = variant.Texture;
+                            HiresNoReplByTexParam.erase(dsKey);
+                            replacementActive = true;
                         }
                         else
                         {
-                            HiresNoReplByTexParam.insert(dsKey);
-                        }
+                            HiresReplByTexParam.erase(dsKey);
+                            variant.Texture = baseTexture;
+                            prevTexLayer = baseTexLayer;
+                            replacementActive = false;
+                            if (markNoReplacement)
+                                HiresNoReplByTexParam.insert(dsKey);
                         }
                     }
 
