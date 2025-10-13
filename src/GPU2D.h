@@ -126,6 +126,15 @@ private:
     melonDS::GPU& GPU;
 };
 
+struct SpriteOverlaySurface
+{
+    u8* Pixels = nullptr;
+    u32 Stride = 0;
+    u32 Height = 0;
+    u32 ScaleX = 1;
+    u32 ScaleY = 1;
+};
+
 class Renderer2D
 {
 public:
@@ -141,10 +150,17 @@ public:
         Framebuffer[0] = unitA;
         Framebuffer[1] = unitB;
     }
-protected:
-    u32* Framebuffer[2];
 
-    Unit* CurUnit;
+    virtual void SetSpriteOverlay(const SpriteOverlaySurface& unitA, const SpriteOverlaySurface& unitB)
+    {
+        SpriteOverlay[0] = unitA;
+        SpriteOverlay[1] = unitB;
+    }
+protected:
+    u32* Framebuffer[2] {};
+    SpriteOverlaySurface SpriteOverlay[2] {};
+
+    Unit* CurUnit = nullptr;
 };
 
 }

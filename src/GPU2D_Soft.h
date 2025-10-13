@@ -22,6 +22,7 @@
 #include "video/hirez/SpriteDump.h"
 
 #include <array>
+#include <utility>
 #include <vector>
 
 namespace melonDS
@@ -40,6 +41,7 @@ public:
     void DrawScanline(u32 line, Unit* unit) override;
     void DrawSprites(u32 line, Unit* unit) override;
     void VBlankEnd(Unit* unitA, Unit* unitB) override;
+    void SetSpriteOverlay(const SpriteOverlaySurface& unitA, const SpriteOverlaySurface& unitB) override;
 private:
     melonDS::GPU& GPU;
     alignas(8) u32 BGOBJLine[256*3];
@@ -150,12 +152,27 @@ private:
     struct SpriteReplacementState
     {
         bool hasReplacement = false;
-        u32 width = 0;
-        u32 height = 0;
-        std::vector<u16> colors;
+        bool overlayReady = false;
+        u32 baseWidth = 0;
+        u32 baseHeight = 0;
+        u32 hiWidth = 0;
+        u32 hiHeight = 0;
+        u32 scaleX = 1;
+        u32 scaleY = 1;
+        std::vector<u8> rgba;
+        std::vector<u16> fallback5551;
     };
 
     std::array<std::array<SpriteReplacementState, 128>, 2> SpriteReplacement {};
+
+    std::pair<u32, u32> DetermineOverlayScale() const;
+    void PrepareOverlayLine(u32 unitIdx, u32 line);
+    void BlitOverlayPixel(const SpriteReplacementState& state, u32 localX, u32 localY, u32 screenX);
+
+    u8* CurOverlayLine = nullptr;
+    u32 CurOverlayStride = 0;
+    u32 CurOverlayScaleX = 1;
+    u32 CurOverlayScaleY = 1;
 
     bool DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 attr2,
                              u32 width, u32 height, std::vector<uint8_t>& rgbaOut,

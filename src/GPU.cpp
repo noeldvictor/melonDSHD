@@ -188,8 +188,9 @@ void GPU::Reset() noexcept
     GPU2D_B.Reset();
     GPU3D.Reset();
 
-    int backbuf = FrontBuffer ? 0 : 1;
-    GPU2D_Renderer->SetFramebuffer(Framebuffer[backbuf][1].get(), Framebuffer[backbuf][0].get());
+    EnsureHiResSpriteBuffers(0, 0);
+
+    AssignFramebuffers();
 
     ResetVRAMCache();
 
@@ -209,6 +210,8 @@ void GPU::Stop() noexcept
     memset(Framebuffer[0][1].get(), 0, fbsize*4);
     memset(Framebuffer[1][0].get(), 0, fbsize*4);
     memset(Framebuffer[1][1].get(), 0, fbsize*4);
+
+    EnsureHiResSpriteBuffers(0, 0);
 
     GPU3D.Stop(*this);
 }
@@ -283,14 +286,182 @@ void GPU::DoSavestate(Savestate* file) noexcept
 void GPU::AssignFramebuffers() noexcept
 {
     int backbuf = FrontBuffer ? 0 : 1;
+    auto makeOverlaySurface = [&](int screen) -> GPU2D::SpriteOverlaySurface
+    {
+        GPU2D::SpriteOverlaySurface surface;
+        if (SpriteOverlayStride && SpriteOverlayScreenHeight && SpriteOverlayScaleX > 1 && SpriteOverlayScaleY > 1)
+        {
+            if (SpriteOverlay[backbuf][screen])
+            {
+                surface.Pixels = SpriteOverlay[backbuf][screen].get();
+                surface.Stride = SpriteOverlayStride;
+                surface.Height = SpriteOverlayScreenHeight;
+                surface.ScaleX = SpriteOverlayScaleX;
+                surface.ScaleY = SpriteOverlayScaleY;
+            }
+        }
+        return surface;
+    };
+
+    GPU2D::SpriteOverlaySurface overlayA;
+    GPU2D::SpriteOverlaySurface overlayB;
+
     if (NDS.PowerControl9 & (1<<15))
     {
         GPU2D_Renderer->SetFramebuffer(Framebuffer[backbuf][0].get(), Framebuffer[backbuf][1].get());
+        overlayA = makeOverlaySurface(0);
+        overlayB = makeOverlaySurface(1);
     }
     else
     {
         GPU2D_Renderer->SetFramebuffer(Framebuffer[backbuf][1].get(), Framebuffer[backbuf][0].get());
+        overlayA = makeOverlaySurface(1);
+        overlayB = makeOverlaySurface(0);
     }
+
+    GPU2D_Renderer->SetSpriteOverlay(overlayA, overlayB);
+}
+
+void GPU::EnsureHiResSpriteBuffers(u32 scaleX, u32 scaleY) noexcept
+{
+    bool overlayChanged = false;
+
+    if (scaleX <= 1 || scaleY <= 1)
+    {
+        if (SpriteOverlayStride || SpriteOverlayScreenHeight || SpriteOverlayScaleX != 1 || SpriteOverlayScaleY != 1)
+            overlayChanged = true;
+
+        for (auto& perBuf : SpriteOverlay)
+        {
+            for (auto& screen : perBuf)
+                screen.reset();
+        }
+
+        SpriteOverlayStride = 0;
+        SpriteOverlayScreenHeight = 0;
+        SpriteOverlayScaleX = 1;
+        SpriteOverlayScaleY = 1;
+
+        if (overlayChanged && GPU2D_Renderer)
+        {
+            GPU2D::SpriteOverlaySurface empty;
+            GPU2D_Renderer->SetSpriteOverlay(empty, empty);
+        }
+        return;
+    }
+
+    const u32 newStride = 256 * scaleX;
+    const u32 newHeight = 192 * scaleY;
+    const size_t bytesPerScreen = size_t(newStride) * newHeight * 4;
+
+    if (SpriteOverlayStride != newStride ||
+        SpriteOverlayScreenHeight != newHeight ||
+        SpriteOverlayScaleX != scaleX ||
+        SpriteOverlayScaleY != scaleY)
+    {
+        overlayChanged = true;
+    }
+
+    bool needAllocate = overlayChanged;
+    if (!needAllocate)
+    {
+        for (int buf = 0; buf < 2 && !needAllocate; ++buf)
+        {
+            for (int screen = 0; screen < 2; ++screen)
+            {
+                if (!SpriteOverlay[buf][screen])
+                {
+                    needAllocate = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (needAllocate)
+    {
+        for (int buf = 0; buf < 2; ++buf)
+        {
+            for (int screen = 0; screen < 2; ++screen)
+            {
+                SpriteOverlay[buf][screen] = std::make_unique<u8[]>(bytesPerScreen);
+                memset(SpriteOverlay[buf][screen].get(), 0, bytesPerScreen);
+            }
+        }
+    }
+
+    SpriteOverlayStride = newStride;
+    SpriteOverlayScreenHeight = newHeight;
+    SpriteOverlayScaleX = scaleX;
+    SpriteOverlayScaleY = scaleY;
+
+    if (overlayChanged && GPU2D_Renderer)
+    {
+        auto makeOverlaySurface = [&](int bufIndex, int screen) -> GPU2D::SpriteOverlaySurface
+        {
+            GPU2D::SpriteOverlaySurface surface;
+            if (SpriteOverlay[bufIndex][screen])
+            {
+                surface.Pixels = SpriteOverlay[bufIndex][screen].get();
+                surface.Stride = SpriteOverlayStride;
+                surface.Height = SpriteOverlayScreenHeight;
+                surface.ScaleX = SpriteOverlayScaleX;
+                surface.ScaleY = SpriteOverlayScaleY;
+            }
+            return surface;
+        };
+
+        int backbuf = FrontBuffer ? 0 : 1;
+        GPU2D::SpriteOverlaySurface overlayA;
+        GPU2D::SpriteOverlaySurface overlayB;
+
+        if (NDS.PowerControl9 & (1<<15))
+        {
+            overlayA = makeOverlaySurface(backbuf, 0);
+            overlayB = makeOverlaySurface(backbuf, 1);
+        }
+        else
+        {
+            overlayA = makeOverlaySurface(backbuf, 1);
+            overlayB = makeOverlaySurface(backbuf, 0);
+        }
+
+        GPU2D_Renderer->SetSpriteOverlay(overlayA, overlayB);
+    }
+}
+
+void GPU::ClearHiResSpriteBuffers() noexcept
+{
+    if (SpriteOverlayStride == 0 || SpriteOverlayScreenHeight == 0)
+        return;
+
+    const size_t bytesPerScreen = size_t(SpriteOverlayStride) * SpriteOverlayScreenHeight * 4;
+    for (auto& perBuf : SpriteOverlay)
+    {
+        for (auto& screen : perBuf)
+        {
+            if (screen)
+                memset(screen.get(), 0, bytesPerScreen);
+        }
+    }
+}
+
+u8* GPU::GetSpriteOverlayBuffer(int buf, int screen) noexcept
+{
+    if (buf < 0 || buf > 1 || screen < 0 || screen > 1)
+        return nullptr;
+    if (!SpriteOverlay[buf][screen])
+        return nullptr;
+    return SpriteOverlay[buf][screen].get();
+}
+
+const u8* GPU::GetSpriteOverlayBuffer(int buf, int screen) const noexcept
+{
+    if (buf < 0 || buf > 1 || screen < 0 || screen > 1)
+        return nullptr;
+    if (!SpriteOverlay[buf][screen])
+        return nullptr;
+    return SpriteOverlay[buf][screen].get();
 }
 
 void GPU::SetRenderer3D(std::unique_ptr<Renderer3D>&& renderer) noexcept

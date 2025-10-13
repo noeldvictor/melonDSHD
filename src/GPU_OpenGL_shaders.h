@@ -46,6 +46,11 @@ uniform uint u3DScale;
 
 uniform usampler2D ScreenTex;
 uniform sampler2D _3DTex;
+uniform ivec2 uSpriteScale;
+uniform int uSpriteOverlayStride;
+uniform int uSpriteOverlayScreenHeight;
+uniform int uSpriteOverlayActive;
+uniform sampler2D SpriteOverlayTex;
 
 smooth in vec2 fTexcoord;
 
@@ -159,9 +164,37 @@ void main()
     pixel.rgb <<= 2;
     pixel.rgb |= (pixel.rgb >> 6);
 
+    vec3 finalColor = vec3(pixel.bgr) / 255.0;
+
+    if (uSpriteOverlayActive != 0 && uSpriteScale.x > 0 && uSpriteScale.y > 0 && uSpriteOverlayStride > 0)
+    {
+        float screenY = fTexcoord.y;
+        int screenIdx = screenY >= 192.0 ? 1 : 0;
+        float localY = screenY - float(screenIdx) * 192.0;
+        float localX = fTexcoord.x;
+
+        float overlayXf = localX * float(uSpriteScale.x);
+        float overlayYf = localY * float(uSpriteScale.y) + float(screenIdx * uSpriteOverlayScreenHeight);
+
+        float overlayMaxX = float(uSpriteOverlayStride);
+        float overlayMaxY = float(uSpriteOverlayScreenHeight * 2);
+
+        if (overlayXf >= 0.0 && overlayYf >= 0.0 && overlayXf < overlayMaxX && overlayYf < overlayMaxY)
+        {
+            ivec2 overlayCoord = ivec2(int(overlayXf), int(overlayYf));
+            vec4 sprite = texelFetch(SpriteOverlayTex, overlayCoord, 0);
+            if (sprite.a > 0.0)
+            {
+                vec3 spriteColor = clamp(sprite.bgr, 0.0, 1.0);
+                float spriteAlpha = clamp(sprite.a, 0.0, 1.0);
+                finalColor = mix(finalColor, spriteColor, spriteAlpha);
+            }
+        }
+    }
+
     // TODO: filters
 
-    oColor = vec4(vec3(pixel.bgr) / 255.0, 1.0);
+    oColor = vec4(finalColor, 1.0);
 }
 )";
 
@@ -314,9 +347,37 @@ void main()
     pixel.rgb <<= 2;
     pixel.rgb |= (pixel.rgb >> 6);
 
+    vec3 finalColor = vec3(pixel.bgr) / 255.0;
+
+    if (uSpriteOverlayActive != 0 && uSpriteScale.x > 0 && uSpriteScale.y > 0 && uSpriteOverlayStride > 0)
+    {
+        float screenY = fTexcoord.y;
+        int screenIdx = screenY >= 192.0 ? 1 : 0;
+        float localY = screenY - float(screenIdx) * 192.0;
+        float localX = fTexcoord.x;
+
+        float overlayXf = localX * float(uSpriteScale.x);
+        float overlayYf = localY * float(uSpriteScale.y) + float(screenIdx * uSpriteOverlayScreenHeight);
+
+        float overlayMaxX = float(uSpriteOverlayStride);
+        float overlayMaxY = float(uSpriteOverlayScreenHeight * 2);
+
+        if (overlayXf >= 0.0 && overlayYf >= 0.0 && overlayXf < overlayMaxX && overlayYf < overlayMaxY)
+        {
+            ivec2 overlayCoord = ivec2(int(overlayXf), int(overlayYf));
+            vec4 sprite = texelFetch(SpriteOverlayTex, overlayCoord, 0);
+            if (sprite.a > 0.0)
+            {
+                vec3 spriteColor = clamp(sprite.bgr, 0.0, 1.0);
+                float spriteAlpha = clamp(sprite.a, 0.0, 1.0);
+                finalColor = mix(finalColor, spriteColor, spriteAlpha);
+            }
+        }
+    }
+
     // TODO: filters
 
-    oColor = vec4(vec3(pixel.bgr) / 255.0, 1.0);
+    oColor = vec4(finalColor, 1.0);
 }
 )";
 

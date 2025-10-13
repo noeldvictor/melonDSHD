@@ -52,6 +52,10 @@ private:
 
     GLuint CompShader {};
     GLuint CompScaleLoc = 0;
+    GLuint CompSpriteScaleLoc = 0;
+    GLuint CompSpriteStrideLoc = 0;
+    GLuint CompSpriteScreenHeightLoc = 0;
+    GLuint CompSpriteActiveLoc = 0;
 
     GLuint CompVertexBufferID = 0;
     GLuint CompVertexArrayID = 0;
@@ -66,6 +70,10 @@ private:
     GLuint CompScreenInputTex = 0;
     std::array<GLuint, 2> CompScreenOutputTex {};
     std::array<GLuint, 2> CompScreenOutputFB {};
+    GLuint CompSpriteOverlayTex = 0;
+
+    int OverlayTexWidth = 0;
+    int OverlayTexHeight = 0;
 };
 
 }

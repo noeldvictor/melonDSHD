@@ -19,11 +19,13 @@
 #include "GPU2D_Soft.h"
 #include "GPU.h"
 #include "GPU3D.h"
+#include "Platform.h"
 #include "video/hirez/SpriteDump.h"
 
 #include <vector>
 #include <array>
 #include <algorithm>
+#include <cstring>
 
 namespace melonDS
 {
@@ -586,6 +588,7 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
     auto processUnit = [&](Unit* unit, int idx)
     {
         if (!unit) return;
+
         const bool doDump = melonDS::sprites::DumpEnabled();
         const bool doReplace = melonDS::sprites::ReplaceEnabled();
         if (!doDump && !doReplace)
@@ -617,6 +620,15 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
 
             auto& replState = replArray[i];
             replState.hasReplacement = false;
+            replState.overlayReady = false;
+            replState.baseWidth = 0;
+            replState.baseHeight = 0;
+            replState.hiWidth = 0;
+            replState.hiHeight = 0;
+            replState.scaleX = 1;
+            replState.scaleY = 1;
+            replState.fallback5551.clear();
+            replState.rgba.clear();
 
             if ((attr0 & 0x0300) == 0x0200)
                 continue;
@@ -643,7 +655,6 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
             if (fmt == melonDS::sprites::ObjFmt::Bitmap)
             {
                 // Skip direct-color sprites (typically 3D capture surfaces)
-                replState.hasReplacement = false;
                 continue;
             }
 
@@ -663,44 +674,90 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
                     auto key = melonDS::sprites::MakeKey(keyRgba.data(), width, height, fmt);
                     if (!melonDS::sprites::TryLoadReplacement(key, replData, rw, rh))
                         return false;
-                    if (rw % width || rh % height)
+
+                    if (rw == 0 || rh == 0)
+                    {
+                        Platform::Log(Platform::LogLevel::Warn,
+                                      "Sprite replacement rejected for unit %d sprite %d: empty dimensions %ux%u\n",
+                                      idx, i, rw, rh);
                         return false;
+                    }
 
-                    u32 scaleX = rw / width;
-                    u32 scaleY = rh / height;
-                    bool swapRB = melonDS::sprites::SwapRBEnabled();
+                    if ((rw % width) || (rh % height))
+                    {
+                        Platform::Log(Platform::LogLevel::Warn,
+                                      "Sprite replacement rejected for unit %d sprite %d: %ux%u not integer multiple of %ux%u\n",
+                                      idx, i, rw, rh, width, height);
+                        return false;
+                    }
 
-                    replState.colors.resize(size_t(width) * height);
+                    const u32 scaleX = rw / width;
+                    const u32 scaleY = rh / height;
+                    const size_t expectedSize = size_t(rw) * rh * 4;
+                    if (replData.size() < expectedSize)
+                    {
+                        Platform::Log(Platform::LogLevel::Warn,
+                                      "Sprite replacement rejected for unit %d sprite %d: file too small (%zu < %zu)\n",
+                                      idx, i, replData.size(), expectedSize);
+                        return false;
+                    }
+
+                    replState.baseWidth = width;
+                    replState.baseHeight = height;
+                    replState.hiWidth = rw;
+                    replState.hiHeight = rh;
+                    replState.scaleX = scaleX;
+                    replState.scaleY = scaleY;
+
+                    const bool swapRB = melonDS::sprites::SwapRBEnabled();
+                    replState.rgba.resize(expectedSize);
+
+                    for (u32 y = 0; y < rh; ++y)
+                    {
+                        for (u32 x = 0; x < rw; ++x)
+                        {
+                            u32 srcX = x;
+                            u32 srcY = y;
+                            if (adjustForFlip)
+                            {
+                                if (attr1 & 0x1000) srcX = rw - 1 - x;
+                                if (attr1 & 0x2000) srcY = rh - 1 - y;
+                            }
+
+                            size_t srcIndex = (size_t(srcY) * rw + srcX) * 4;
+                            size_t dstIndex = (size_t(y) * rw + x) * 4;
+
+                            uint8_t r = replData[srcIndex + 0];
+                            uint8_t g = replData[srcIndex + 1];
+                            uint8_t b = replData[srcIndex + 2];
+                            uint8_t a = replData[srcIndex + 3];
+                            if (swapRB) std::swap(r, b);
+
+                            replState.rgba[dstIndex + 0] = r;
+                            replState.rgba[dstIndex + 1] = g;
+                            replState.rgba[dstIndex + 2] = b;
+                            replState.rgba[dstIndex + 3] = a;
+                        }
+                    }
+
+                    replState.fallback5551.resize(size_t(width) * height);
                     for (u32 y = 0; y < height; ++y)
                     {
                         for (u32 x = 0; x < width; ++x)
                         {
                             u32 sampleX = x * scaleX;
                             u32 sampleY = y * scaleY;
-                            if (adjustForFlip)
-                            {
-                                if (attr1 & 0x1000)
-                                    sampleX = rw - scaleX * (x + 1);
-                                if (attr1 & 0x2000)
-                                    sampleY = rh - scaleY * (y + 1);
-                            }
                             if (sampleX >= rw) sampleX = rw - 1;
                             if (sampleY >= rh) sampleY = rh - 1;
                             size_t srcIndex = (size_t(sampleY) * rw + sampleX) * 4;
-                            if (srcIndex + 3 >= replData.size())
-                            {
-                                replState.colors[y*width + x] = 0;
-                                continue;
-                            }
-                            uint8_t r = replData[srcIndex + (swapRB ? 2 : 0)];
-                            uint8_t g = replData[srcIndex + 1];
-                            uint8_t b = replData[srcIndex + (swapRB ? 0 : 2)];
-                            uint8_t a = replData[srcIndex + 3];
-                            replState.colors[y*width + x] = RGBA8To5551(r, g, b, a);
+                            replState.fallback5551[y * width + x] =
+                                RGBA8To5551(replState.rgba[srcIndex + 0],
+                                            replState.rgba[srcIndex + 1],
+                                            replState.rgba[srcIndex + 2],
+                                            replState.rgba[srcIndex + 3]);
                         }
                     }
-                    replState.width = width;
-                    replState.height = height;
+
                     replState.hasReplacement = true;
                     return true;
                 };
@@ -731,7 +788,7 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
                                 std::swap(rowTop[x], rowBottom[x]);
                         }
                     }
-                    loaded = loadIntoState(alt, true);
+                    loadIntoState(alt, true);
                 }
             }
         }
@@ -740,15 +797,154 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
     processUnit(unitA, 0);
     processUnit(unitB, 1);
 
+    auto [scaleX, scaleY] = DetermineOverlayScale();
+    const bool overlayActive = (scaleX > 1 && scaleY > 1);
+
+    for (auto& perUnit : SpriteReplacement)
+    {
+        for (auto& state : perUnit)
+        {
+            state.overlayReady = (overlayActive && state.hasReplacement &&
+                                   state.scaleX == scaleX && state.scaleY == scaleY &&
+                                   !state.rgba.empty());
+        }
+    }
+
+    if (overlayActive)
+        GPU.EnsureHiResSpriteBuffers(scaleX, scaleY);
+    else
+        GPU.EnsureHiResSpriteBuffers(0, 0);
+
 #ifdef OGLRENDERER_ENABLED
     if (Renderer3D& renderer3d = GPU.GPU3D.GetCurrentRenderer(); renderer3d.Accelerated)
     {
-        if ((unitA->CaptureCnt & (1<<31)) && (((unitA->CaptureCnt >> 29) & 0x3) != 1))
+        if (unitA && (unitA->CaptureCnt & (1<<31)) && (((unitA->CaptureCnt >> 29) & 0x3) != 1))
         {
             renderer3d.PrepareCaptureFrame();
         }
     }
 #endif
+}
+
+void SoftRenderer::SetSpriteOverlay(const SpriteOverlaySurface& unitA, const SpriteOverlaySurface& unitB)
+{
+    Renderer2D::SetSpriteOverlay(unitA, unitB);
+    CurOverlayLine = nullptr;
+    CurOverlayStride = 0;
+    CurOverlayScaleX = 1;
+    CurOverlayScaleY = 1;
+}
+
+std::pair<u32, u32> SoftRenderer::DetermineOverlayScale() const
+{
+    u32 scaleX = 0;
+    u32 scaleY = 0;
+
+    for (const auto& perUnit : SpriteReplacement)
+    {
+        for (const auto& state : perUnit)
+        {
+            if (!state.hasReplacement) continue;
+            if (state.scaleX <= 1 || state.scaleY <= 1) continue;
+            if (state.rgba.empty()) continue;
+
+            if (scaleX == 0 && scaleY == 0)
+            {
+                scaleX = state.scaleX;
+                scaleY = state.scaleY;
+            }
+            else if (scaleX != state.scaleX || scaleY != state.scaleY)
+            {
+                return {0, 0};
+            }
+        }
+    }
+
+    if (scaleX == 0 || scaleY == 0)
+        return {0, 0};
+
+    return {scaleX, scaleY};
+}
+
+void SoftRenderer::PrepareOverlayLine(u32 unitIdx, u32 line)
+{
+    CurOverlayLine = nullptr;
+    CurOverlayStride = 0;
+    CurOverlayScaleX = 1;
+    CurOverlayScaleY = 1;
+
+    if (unitIdx >= 2)
+        return;
+
+    const auto& surface = SpriteOverlay[unitIdx];
+    if (!surface.Pixels || surface.Stride == 0 || surface.Height == 0)
+        return;
+
+    if (surface.ScaleX == 0 || surface.ScaleY == 0)
+        return;
+
+    if (line >= 192)
+        return;
+
+    CurOverlayStride = surface.Stride;
+    CurOverlayScaleX = surface.ScaleX;
+    CurOverlayScaleY = surface.ScaleY;
+
+    if (CurOverlayScaleX == 0 || CurOverlayScaleY == 0)
+    {
+        CurOverlayLine = nullptr;
+        return;
+    }
+
+    const size_t bytesPerRow = size_t(CurOverlayStride) * 4;
+    const size_t startRow = size_t(line) * CurOverlayScaleY;
+    const size_t totalRows = surface.Height;
+
+    if (startRow >= totalRows)
+    {
+        CurOverlayLine = nullptr;
+        return;
+    }
+
+    const size_t rowsToClear = std::min<size_t>(CurOverlayScaleY, totalRows - startRow);
+    u8* base = surface.Pixels + startRow * bytesPerRow;
+    std::memset(base, 0, rowsToClear * bytesPerRow);
+    CurOverlayLine = base;
+}
+
+void SoftRenderer::BlitOverlayPixel(const SpriteReplacementState& state, u32 localX, u32 localY, u32 screenX)
+{
+    if (!CurOverlayLine)
+        return;
+    if (!state.overlayReady)
+        return;
+    if (state.scaleX != CurOverlayScaleX || state.scaleY != CurOverlayScaleY)
+        return;
+    if (screenX >= 256)
+        return;
+    if (localX >= state.baseWidth || localY >= state.baseHeight)
+        return;
+    if (state.rgba.empty() || state.hiWidth == 0 || state.hiHeight == 0)
+        return;
+
+    const size_t dstStrideBytes = size_t(CurOverlayStride) * 4;
+    const size_t srcStrideBytes = size_t(state.hiWidth) * 4;
+
+    const size_t srcBaseX = size_t(localX) * state.scaleX;
+    const size_t srcBaseY = size_t(localY) * state.scaleY;
+    if ((srcBaseX + state.scaleX) > state.hiWidth || (srcBaseY + state.scaleY) > state.hiHeight)
+        return;
+
+    const size_t dstBaseX = size_t(screenX) * CurOverlayScaleX;
+    if ((dstBaseX + state.scaleX) > CurOverlayStride)
+        return;
+
+    for (u32 sy = 0; sy < state.scaleY; ++sy)
+    {
+        const size_t srcIndex = (srcBaseY + sy) * srcStrideBytes + srcBaseX * 4;
+        const size_t dstIndex = sy * dstStrideBytes + dstBaseX * 4;
+        std::memcpy(CurOverlayLine + dstIndex, &state.rgba[srcIndex], size_t(state.scaleX) * 4);
+    }
 }
 
 void SoftRenderer::DoCapture(u32 line, u32 width)
@@ -2022,6 +2218,8 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
 {
     CurUnit = unit;
 
+    PrepareOverlayLine(CurUnit->Num, line);
+
     if (line == 0)
     {
         // reset those counters here
@@ -2373,7 +2571,7 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
     if (melonDS::sprites::ReplaceEnabled())
     {
         const auto& replState = SpriteReplacement[CurUnit->Num][num];
-        if (replState.hasReplacement && replState.width == width && replState.height == height)
+        if (replState.hasReplacement && replState.baseWidth == width && replState.baseHeight == height)
             replacement = &replState;
     }
 
@@ -2403,9 +2601,11 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
     {
         if (!replacement)
             return 0;
-        if (localX >= replacement->width || localY >= replacement->height)
+        if (replacement->fallback5551.empty())
             return 0;
-        return replacement->colors[localY * replacement->width + localX];
+        if (localX >= replacement->baseWidth || localY >= replacement->baseHeight)
+            return 0;
+        return replacement->fallback5551[localY * replacement->baseWidth + localX];
     };
 
     // yflip
@@ -2490,6 +2690,9 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
 
             pixelsaddr += pixelstride;
 
+            if (replacement && !window)
+                BlitOverlayPixel(*replacement, localX, localY, xpos);
+
             if (replacement)
             {
                 u16 replColor = sampleReplacement(localX, localY);
@@ -2568,6 +2771,9 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
                 color = objvram[pixelsaddr & objvrammask];
 
                 pixelsaddr += pixelstride;
+
+                 if (replacement && !window)
+                     BlitOverlayPixel(*replacement, localX, localY, xpos);
 
                 if (replacement)
                 {
@@ -2650,6 +2856,9 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
                     if (xoff & 0x1) { color = objvram[pixelsaddr & objvrammask] >> 4; pixelsaddr++; }
                     else              color = objvram[pixelsaddr & objvrammask] & 0x0F;
                 }
+
+                if (replacement && !window)
+                    BlitOverlayPixel(*replacement, localX, localY, xpos);
 
                 if (replacement)
                 {

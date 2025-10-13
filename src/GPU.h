@@ -76,6 +76,16 @@ public:
     [[nodiscard]] const GPU2D::Renderer2D& GetRenderer2D() const noexcept { return *GPU2D_Renderer; }
     [[nodiscard]] GPU2D::Renderer2D& GetRenderer2D() noexcept { return *GPU2D_Renderer; }
 
+    void EnsureHiResSpriteBuffers(u32 scaleX, u32 scaleY) noexcept;
+    void ClearHiResSpriteBuffers() noexcept;
+    [[nodiscard]] u8* GetSpriteOverlayBuffer(int buf, int screen) noexcept;
+    [[nodiscard]] const u8* GetSpriteOverlayBuffer(int buf, int screen) const noexcept;
+    [[nodiscard]] u32 GetSpriteOverlayStride() const noexcept { return SpriteOverlayStride; }
+    [[nodiscard]] u32 GetSpriteOverlayScreenHeight() const noexcept { return SpriteOverlayScreenHeight; }
+    [[nodiscard]] u32 GetSpriteOverlayScaleX() const noexcept { return SpriteOverlayScaleX; }
+    [[nodiscard]] u32 GetSpriteOverlayScaleY() const noexcept { return SpriteOverlayScaleY; }
+    [[nodiscard]] bool HasSpriteOverlay() const noexcept { return SpriteOverlayStride != 0 && SpriteOverlayScreenHeight != 0; }
+
     void MapVRAM_AB(u32 bank, u8 cnt) noexcept;
     void MapVRAM_CD(u32 bank, u8 cnt) noexcept;
     void MapVRAM_E(u32 bank, u8 cnt) noexcept;
@@ -583,6 +593,11 @@ public:
 
     int FrontBuffer = 0;
     std::unique_ptr<u32[]> Framebuffer[2][2] {};
+    std::unique_ptr<u8[]> SpriteOverlay[2][2] {};
+    u32 SpriteOverlayStride = 0;
+    u32 SpriteOverlayScreenHeight = 0;
+    u32 SpriteOverlayScaleX = 1;
+    u32 SpriteOverlayScaleY = 1;
 
     GPU2D::Unit GPU2D_A;
     GPU2D::Unit GPU2D_B;

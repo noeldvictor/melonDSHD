@@ -145,6 +145,8 @@ bool TryLoadReplacement(const SpriteKey& key, std::vector<uint8_t>& rgbaOut, uin
         {
             if (!read_tga(p, tmp, w, h)) return false;
         }
+        if (w == 0 || h == 0 || tmp.size() != size_t(w) * h * 4)
+            return false;
         Cache[k] = CacheEntry{ std::move(tmp), w, h };
         rgbaOut = Cache[k].rgba; outW = w; outH = h; return true;
     };

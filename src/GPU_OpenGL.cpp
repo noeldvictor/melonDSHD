@@ -51,12 +51,23 @@ std::optional<GLCompositor> GLCompositor::New() noexcept
 GLCompositor::GLCompositor(GLuint compShader) noexcept : CompShader(compShader)
 {
     CompScaleLoc = glGetUniformLocation(CompShader, "u3DScale");
+    CompSpriteScaleLoc = glGetUniformLocation(CompShader, "uSpriteScale");
+    CompSpriteStrideLoc = glGetUniformLocation(CompShader, "uSpriteOverlayStride");
+    CompSpriteScreenHeightLoc = glGetUniformLocation(CompShader, "uSpriteOverlayScreenHeight");
+    CompSpriteActiveLoc = glGetUniformLocation(CompShader, "uSpriteOverlayActive");
 
     glUseProgram(CompShader);
     GLuint screenTextureUniform = glGetUniformLocation(CompShader, "ScreenTex");
     glUniform1i(screenTextureUniform, 0);
     GLuint _3dTextureUniform = glGetUniformLocation(CompShader, "_3DTex");
     glUniform1i(_3dTextureUniform, 1);
+    GLuint spriteOverlayUniform = glGetUniformLocation(CompShader, "SpriteOverlayTex");
+    glUniform1i(spriteOverlayUniform, 2);
+
+    glUniform2i(CompSpriteScaleLoc, 0, 0);
+    glUniform1i(CompSpriteStrideLoc, 0);
+    glUniform1i(CompSpriteScreenHeightLoc, 0);
+    glUniform1i(CompSpriteActiveLoc, 0);
 
     // all this mess is to prevent bleeding
 #define SETVERTEX(i, x, y, offset) \
@@ -116,6 +127,17 @@ GLCompositor::GLCompositor(GLuint compShader) noexcept : CompShader(compShader)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
 
+    glGenTextures(1, &CompSpriteOverlayTex);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, CompSpriteOverlayTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
+    glActiveTexture(GL_TEXTURE0);
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -126,6 +148,7 @@ GLCompositor::~GLCompositor()
     glDeleteFramebuffers(CompScreenOutputFB.size(), &CompScreenOutputFB[0]);
     glDeleteTextures(1, &CompScreenInputTex);
     glDeleteTextures(CompScreenOutputTex.size(), &CompScreenOutputTex[0]);
+    glDeleteTextures(1, &CompSpriteOverlayTex);
 
     glDeleteVertexArrays(1, &CompVertexArrayID);
     glDeleteBuffers(1, &CompVertexBufferID);
@@ -139,13 +162,20 @@ GLCompositor::GLCompositor(GLCompositor&& other) noexcept :
     ScreenH(other.ScreenH),
     ScreenW(other.ScreenW),
     CompScaleLoc(other.CompScaleLoc),
+    CompSpriteScaleLoc(other.CompSpriteScaleLoc),
+    CompSpriteStrideLoc(other.CompSpriteStrideLoc),
+    CompSpriteScreenHeightLoc(other.CompSpriteScreenHeightLoc),
+    CompSpriteActiveLoc(other.CompSpriteActiveLoc),
     CompVertices(other.CompVertices),
     CompShader(other.CompShader),
     CompVertexBufferID(other.CompVertexBufferID),
     CompVertexArrayID(other.CompVertexArrayID),
     CompScreenInputTex(other.CompScreenInputTex),
     CompScreenOutputTex(other.CompScreenOutputTex),
-    CompScreenOutputFB(other.CompScreenOutputFB)
+    CompScreenOutputFB(other.CompScreenOutputFB),
+    CompSpriteOverlayTex(other.CompSpriteOverlayTex),
+    OverlayTexWidth(other.OverlayTexWidth),
+    OverlayTexHeight(other.OverlayTexHeight)
 {
     other.CompScreenOutputFB = {};
     other.CompScreenInputTex = {};
@@ -153,6 +183,9 @@ GLCompositor::GLCompositor(GLCompositor&& other) noexcept :
     other.CompVertexArrayID = {};
     other.CompVertexBufferID = {};
     other.CompShader = {};
+    other.CompSpriteOverlayTex = {};
+    other.OverlayTexWidth = 0;
+    other.OverlayTexHeight = 0;
 }
 
 GLCompositor& GLCompositor::operator=(GLCompositor&& other) noexcept
@@ -163,6 +196,10 @@ GLCompositor& GLCompositor::operator=(GLCompositor&& other) noexcept
         ScreenH = other.ScreenH;
         ScreenW = other.ScreenW;
         CompScaleLoc = other.CompScaleLoc;
+        CompSpriteScaleLoc = other.CompSpriteScaleLoc;
+        CompSpriteStrideLoc = other.CompSpriteStrideLoc;
+        CompSpriteScreenHeightLoc = other.CompSpriteScreenHeightLoc;
+        CompSpriteActiveLoc = other.CompSpriteActiveLoc;
         CompVertices = other.CompVertices;
 
         // Clean up these resources before overwriting them
@@ -184,12 +221,20 @@ GLCompositor& GLCompositor::operator=(GLCompositor&& other) noexcept
         glDeleteFramebuffers(CompScreenOutputFB.size(), &CompScreenOutputFB[0]);
         CompScreenOutputFB = other.CompScreenOutputFB;
 
+        glDeleteTextures(1, &CompSpriteOverlayTex);
+        CompSpriteOverlayTex = other.CompSpriteOverlayTex;
+        OverlayTexWidth = other.OverlayTexWidth;
+        OverlayTexHeight = other.OverlayTexHeight;
+
         other.CompScreenOutputFB = {};
         other.CompScreenInputTex = {};
         other.CompScreenOutputTex = {};
         other.CompVertexArrayID = {};
         other.CompVertexBufferID = {};
         other.CompShader = {};
+        other.CompSpriteOverlayTex = {};
+        other.OverlayTexWidth = 0;
+        other.OverlayTexHeight = 0;
     }
 
     return *this;
@@ -264,6 +309,51 @@ void GLCompositor::RenderFrame(const GPU& gpu, Renderer3D& renderer) noexcept
                         GL_UNSIGNED_BYTE, gpu.Framebuffer[backbuf][0].get());
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192, 256*3 + 1, 192, GL_RGBA_INTEGER,
                         GL_UNSIGNED_BYTE, gpu.Framebuffer[backbuf][1].get());
+    }
+
+    bool overlayActive = false;
+    glUniform1i(CompSpriteActiveLoc, 0);
+    glUniform2i(CompSpriteScaleLoc, 0, 0);
+    glUniform1i(CompSpriteStrideLoc, 0);
+    glUniform1i(CompSpriteScreenHeightLoc, 0);
+
+    if (gpu.HasSpriteOverlay())
+    {
+        int overlayScaleX = static_cast<int>(gpu.GetSpriteOverlayScaleX());
+        int overlayScaleY = static_cast<int>(gpu.GetSpriteOverlayScaleY());
+        int overlayStride = static_cast<int>(gpu.GetSpriteOverlayStride());
+        int overlayScreenHeight = static_cast<int>(gpu.GetSpriteOverlayScreenHeight());
+
+        if (overlayScaleX > 1 && overlayScaleY > 1 && overlayStride > 0 && overlayScreenHeight > 0)
+        {
+            const u8* overlayTop = gpu.GetSpriteOverlayBuffer(backbuf, 0);
+            const u8* overlayBottom = gpu.GetSpriteOverlayBuffer(backbuf, 1);
+            if (overlayTop && overlayBottom)
+            {
+                overlayActive = true;
+                glUniform1i(CompSpriteActiveLoc, 1);
+                glUniform2i(CompSpriteScaleLoc, overlayScaleX, overlayScaleY);
+                glUniform1i(CompSpriteStrideLoc, overlayStride);
+                glUniform1i(CompSpriteScreenHeightLoc, overlayScreenHeight);
+
+                const int overlayHeightTotal = overlayScreenHeight * 2;
+                if (overlayStride != OverlayTexWidth || overlayHeightTotal != OverlayTexHeight)
+                {
+                    glActiveTexture(GL_TEXTURE2);
+                    glBindTexture(GL_TEXTURE_2D, CompSpriteOverlayTex);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, overlayStride, overlayHeightTotal, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                    OverlayTexWidth = overlayStride;
+                    OverlayTexHeight = overlayHeightTotal;
+                }
+
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D, CompSpriteOverlayTex);
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, overlayStride, overlayScreenHeight, GL_RGBA, GL_UNSIGNED_BYTE, overlayTop);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, overlayScreenHeight, overlayStride, overlayScreenHeight, GL_RGBA, GL_UNSIGNED_BYTE, overlayBottom);
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            }
+        }
     }
 
     glActiveTexture(GL_TEXTURE1);
