@@ -19,11 +19,277 @@
 #include "GPU2D_Soft.h"
 #include "GPU.h"
 #include "GPU3D.h"
+#include "video/hirez/SpriteDump.h"
+
+#include <vector>
+#include <array>
 
 namespace melonDS
 {
 namespace GPU2D
 {
+
+static inline void StoreRGBA(std::vector<uint8_t>& buf, u32 width, u32 x, u32 y, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    if (x >= width) return;
+    size_t idx = (size_t(y) * width + x) * 4;
+    if (idx + 3 >= buf.size()) return;
+    buf[idx + 0] = r;
+    buf[idx + 1] = g;
+    buf[idx + 2] = b;
+    buf[idx + 3] = a;
+}
+
+static inline void Color555ToRGBA(u16 color, uint8_t& r, uint8_t& g, uint8_t& b, uint8_t& a)
+{
+    r = uint8_t(((color & 0x001F) * 255 + 15) / 31);
+    g = uint8_t((((color & 0x03E0) >> 5) * 255 + 15) / 31);
+    b = uint8_t((((color & 0x7C00) >> 10) * 255 + 15) / 31);
+    a = (color & 0x8000) ? 255 : 0;
+}
+
+static inline u16 RGBA8To5551(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    if (a < 32) return 0; // treat as fully transparent
+    u16 out = 0x8000;
+    out |= u16((int(r) * 31 + 127) / 255);
+    out |= u16((int(g) * 31 + 127) / 255) << 5;
+    out |= u16((int(b) * 31 + 127) / 255) << 10;
+    return out;
+}
+
+void SoftRenderer::DecodeSpriteForDump(Unit& unit, SpriteBuildState& build)
+{
+    const u32 width = build.width;
+    const u32 height = build.height;
+
+    if (width == 0 || height == 0)
+    {
+        build.rgba.clear();
+        return;
+    }
+
+    build.rgba.assign(size_t(width) * height * 4, 0);
+
+    u8* objvram;
+    u32 objvrammask;
+    unit.GetOBJVRAM(objvram, objvrammask);
+
+    const u32 dispCnt = build.dispCnt;
+    const bool useExtPal = (dispCnt & 0x80000000) != 0;
+    u16* basePal = (u16*)&GPU.Palette[unit.Num ? 0x600 : 0x200];
+    u16* extPal = useExtPal ? unit.GetOBJExtPal() : nullptr;
+
+    const bool xflip = (build.attrib1 & 0x1000) != 0;
+    const bool yflip = (build.attrib1 & 0x2000) != 0;
+
+    const u32 tilenum = build.attrib2 & 0x03FF;
+
+    const auto writePixel = [&](u32 destX, u32 destY, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+    {
+        if (destX >= width || destY >= height) return;
+        size_t idx = (size_t(destY) * width + destX) * 4;
+        build.rgba[idx + 0] = r;
+        build.rgba[idx + 1] = g;
+        build.rgba[idx + 2] = b;
+        build.rgba[idx + 3] = a;
+    };
+
+    switch (build.fmt)
+    {
+    case melonDS::sprites::ObjFmt::Bitmap:
+    {
+        for (u32 destY = 0; destY < height; ++destY)
+        {
+            u32 srcY = yflip ? (height - 1 - destY) : destY;
+
+            u32 pixelsaddr = tilenum;
+            if (dispCnt & 0x40)
+            {
+                if (dispCnt & 0x20)
+                {
+                    // reserved, render nothing
+                    continue;
+                }
+                else
+                {
+                    pixelsaddr <<= (7 + ((dispCnt >> 22) & 0x1));
+                    pixelsaddr += (srcY * width * 2);
+                }
+            }
+            else
+            {
+                if (dispCnt & 0x20)
+                {
+                    pixelsaddr = ((tilenum & 0x01F) << 4) + ((tilenum & 0x3E0) << 7);
+                    pixelsaddr += (srcY * 256 * 2);
+                }
+                else
+                {
+                    pixelsaddr = ((tilenum & 0x00F) << 4) + ((tilenum & 0x3F0) << 7);
+                    pixelsaddr += (srcY * 128 * 2);
+                }
+            }
+
+            s32 addr = pixelsaddr;
+            if (xflip)
+                addr += ((width - 1) << 1);
+
+            for (u32 destX = 0; destX < width; ++destX)
+            {
+                u16 color = *(u16*)&objvram[addr & objvrammask];
+                addr += xflip ? -2 : 2;
+
+                uint8_t r = 0, g = 0, b = 0, a = 0;
+                if (color & 0x8000)
+                    Color555ToRGBA(color, r, g, b, a);
+
+                writePixel(destX, destY, r, g, b, a);
+            }
+        }
+        break;
+    }
+    case melonDS::sprites::ObjFmt::Pal256:
+    {
+        const u32 wmask = width - 8;
+        const bool oneDim = (dispCnt & 0x10) != 0;
+        const u32 oneDimShift = (dispCnt >> 20) & 0x3;
+        const bool doubleSize = (build.attrib0 & 0x2000) != 0;
+        const u32 palBank256 = (build.attrib2 & 0xF000) >> 4;
+
+        for (u32 destY = 0; destY < height; ++destY)
+        {
+            u32 srcY = yflip ? (height - 1 - destY) : destY;
+
+            u32 base = tilenum;
+            if (oneDim)
+            {
+                base <<= oneDimShift;
+                base += ((srcY >> 3) * (width >> 3)) << (doubleSize ? 1 : 0);
+            }
+            else
+            {
+                base += ((srcY >> 3) * 0x20);
+            }
+
+            s32 addr = (base << 5) + ((srcY & 0x7) << 3);
+            s32 pixelstride;
+            if (xflip)
+            {
+                addr += (((width - 1) & wmask) << 3);
+                addr += ((width - 1) & 0x7);
+                pixelstride = -1;
+            }
+            else
+            {
+                pixelstride = 1;
+            }
+
+            for (u32 destX = 0; destX < width; ++destX)
+            {
+                u8 colorIdx = objvram[addr & objvrammask];
+                addr += pixelstride;
+                if (((destX + 1) & 0x7) == 0)
+                    addr += (56 * pixelstride);
+
+                uint8_t r = 0, g = 0, b = 0, a = 0;
+                if (colorIdx != 0)
+                {
+                    u16 palColor = 0;
+                    if (useExtPal && extPal)
+                        palColor = extPal[palBank256 + colorIdx];
+                    else
+                        palColor = basePal[colorIdx];
+                    Color555ToRGBA(palColor | 0x8000, r, g, b, a);
+                }
+
+                writePixel(destX, destY, r, g, b, a);
+            }
+        }
+        break;
+    }
+    case melonDS::sprites::ObjFmt::Pal16:
+    {
+        const u32 wmask = width - 8;
+        const bool oneDim = (dispCnt & 0x10) != 0;
+        const u32 oneDimShift = (dispCnt >> 20) & 0x3;
+        const bool doubleSize = (build.attrib0 & 0x2000) != 0;
+        const u32 palBank16 = (build.attrib2 >> 12) & 0xF;
+        const u32 palBank16Ext = (build.attrib2 & 0xF000) >> 8;
+
+        for (u32 destY = 0; destY < height; ++destY)
+        {
+            u32 srcY = yflip ? (height - 1 - destY) : destY;
+
+            u32 base = tilenum;
+            if (oneDim)
+            {
+                base <<= oneDimShift;
+                base += ((srcY >> 3) * (width >> 3)) << (doubleSize ? 1 : 0);
+            }
+            else
+            {
+                base += ((srcY >> 3) * 0x20);
+            }
+
+            s32 addr = (base << 5) + ((srcY & 0x7) << 2);
+            if (xflip)
+            {
+                addr += (((width - 1) & wmask) << 2);
+                addr += (((width - 1) & 0x7) >> 1);
+            }
+
+            for (u32 destX = 0; destX < width; ++destX)
+            {
+                u8 color;
+                if (xflip)
+                {
+                    if (destX & 0x1)
+                    {
+                        color = objvram[addr & objvrammask] & 0x0F;
+                        addr--;
+                    }
+                    else
+                    {
+                        color = objvram[addr & objvrammask] >> 4;
+                    }
+                }
+                else
+                {
+                    if (destX & 0x1)
+                    {
+                        color = objvram[addr & objvrammask] >> 4;
+                        addr++;
+                    }
+                    else
+                    {
+                        color = objvram[addr & objvrammask] & 0x0F;
+                    }
+                }
+
+                if (((destX + 1) & 0x7) == 0)
+                    addr += xflip ? -28 : 28;
+
+                uint8_t r = 0, g = 0, b = 0, a = 0;
+                if (color != 0)
+                {
+                    u16 palColor = 0;
+                    if (useExtPal && extPal)
+                        palColor = extPal[palBank16Ext + color];
+                    else
+                        palColor = basePal[(palBank16 << 4) | color];
+                    Color555ToRGBA(palColor | 0x8000, r, g, b, a);
+                }
+
+                writePixel(destX, destY, r, g, b, a);
+            }
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
 SoftRenderer::SoftRenderer(melonDS::GPU& gpu)
     : Renderer2D(), GPU(gpu)
 {
@@ -307,6 +573,81 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
 
 void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
 {
+    auto processUnit = [&](Unit* unit, int idx)
+    {
+        if (!unit) return;
+        if (!(melonDS::sprites::DumpEnabled() || melonDS::sprites::ReplaceEnabled()))
+            return;
+
+        static const u32 spritewidth[16] =
+        {
+            8, 16, 8, 8,
+            16, 32, 8, 8,
+            32, 32, 16, 8,
+            64, 64, 32, 8
+        };
+        static const u32 spriteheight[16] =
+        {
+            8, 8, 16, 8,
+            16, 8, 32, 8,
+            32, 16, 32, 8,
+            64, 32, 64, 8
+        };
+
+        u16* oam = (u16*)&GPU.OAM[idx ? 0x400 : 0];
+
+        for (int i = 0; i < 128; ++i)
+        {
+            u16 attr0 = oam[i*4 + 0];
+            u16 attr1 = oam[i*4 + 1];
+            u16 attr2 = oam[i*4 + 2];
+
+            if ((attr0 & 0x0300) == 0x0200) // OBJ disabled (obj-window only)
+                continue;
+
+            bool rotscale = (attr0 & 0x0100) != 0;
+            u32 sizeparam = (attr0 >> 14) | ((attr1 & 0xC000) >> 12);
+            if (sizeparam >= 16)
+                continue;
+
+            u32 width = spritewidth[sizeparam];
+            u32 height = spriteheight[sizeparam];
+
+            if (rotscale && (attr0 & 0x0200))
+            {
+                width <<= 1;
+                height <<= 1;
+            }
+
+            SpriteBuildState build;
+
+            build.attrib0 = attr0;
+            build.attrib1 = attr1;
+            build.attrib2 = attr2;
+            build.dispCnt = unit->DispCnt;
+            build.width = width;
+            build.height = height;
+
+            if (((attr0 >> 10) & 0x3) == 3)
+                build.fmt = melonDS::sprites::ObjFmt::Bitmap;
+            else if (attr0 & 0x2000)
+                build.fmt = melonDS::sprites::ObjFmt::Pal256;
+            else
+                build.fmt = melonDS::sprites::ObjFmt::Pal16;
+
+            DecodeSpriteForDump(*unit, build);
+
+            if (!build.rgba.empty())
+            {
+                auto key = melonDS::sprites::MakeKey(build.rgba.data(), build.width, build.height, build.fmt);
+                melonDS::sprites::DumpIfEnabled(key, build.rgba.data(), build.width, build.height);
+            }
+        }
+    };
+
+    processUnit(unitA, 0);
+    processUnit(unitB, 1);
+
 #ifdef OGLRENDERER_ENABLED
     if (Renderer3D& renderer3d = GPU.GPU3D.GetCurrentRenderer(); renderer3d.Accelerated)
     {
@@ -1599,6 +1940,7 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
 
         CurUnit->OBJMosaicY = 0;
         CurUnit->OBJMosaicYCount = 0;
+
     }
 
     if (CurUnit->Num == 0)
@@ -1932,6 +2274,7 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
     u32 spritemode = window ? 0 : ((attrib[0] >> 10) & 0x3);
 
     u32 wmask = width - 8; // really ((width - 1) & ~0x7)
+    const bool xflip = (attrib[1] & 0x1000) != 0;
 
     if ((attrib[0] & 0x1000) && !window)
     {
@@ -1945,6 +2288,13 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
 
     u32* objLine = OBJLine[CurUnit->Num];
     u8* objWindow = OBJWindow[CurUnit->Num];
+
+    const bool useExtPal = (CurUnit->DispCnt & 0x80000000);
+    u16* basePal = (u16*)&GPU.Palette[CurUnit->Num ? 0x600 : 0x200];
+    u16* extPal = useExtPal ? CurUnit->GetOBJExtPal() : nullptr;
+    u32 palBank16 = (attrib[2] >> 12) & 0xF;
+    u32 palBank16Ext = (attrib[2] & 0xF000) >> 8;
+    u32 palBank256 = (attrib[2] & 0xF000) >> 4;
 
     // yflip
     if (attrib[1] & 0x2000)
@@ -2022,6 +2372,8 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
 
         for (; xoff < xend;)
         {
+            u32 localX = xoff;
+            u32 localY = ypos;
             color = *(u16*)&objvram[pixelsaddr & objvrammask];
 
             pixelsaddr += pixelstride;
@@ -2089,6 +2441,8 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
 
             for (; xoff < xend;)
             {
+                u32 localX = xoff;
+                u32 localY = ypos;
                 color = objvram[pixelsaddr & objvrammask];
 
                 pixelsaddr += pixelstride;
@@ -2142,6 +2496,8 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
 
             for (; xoff < xend;)
             {
+                u32 localX = xoff;
+                u32 localY = ypos;
                 if (attrib[1] & 0x1000)
                 {
                     if (xoff & 0x1) { color = objvram[pixelsaddr & objvrammask] & 0x0F; pixelsaddr--; }

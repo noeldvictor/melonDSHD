@@ -96,7 +96,9 @@ if (ENABLE_OGLRENDERER)
         GPU3D_OpenGL_shaders.h
         OpenGLSupport.cpp
         video/hirez/TexDump.cpp
-        video/hirez/TexDump.h)
+        video/hirez/TexDump.h
+        video/hirez/SpriteDump.cpp
+        video/hirez/SpriteDump.h)
 
     target_compile_definitions(core PUBLIC OGLRENDERER_ENABLED)
 endif()

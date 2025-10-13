@@ -19,6 +19,9 @@
 #pragma once
 
 #include "GPU2D.h"
+#include "video/hirez/SpriteDump.h"
+
+#include <vector>
 
 namespace melonDS
 {
@@ -142,6 +145,20 @@ private:
     template<bool window> void DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s32 ypos);
 
     void DoCapture(u32 line, u32 width);
+
+    struct SpriteBuildState
+    {
+        melonDS::sprites::ObjFmt fmt = melonDS::sprites::ObjFmt::Unknown;
+        u32 width = 0;
+        u32 height = 0;
+        u16 attrib0 = 0;
+        u16 attrib1 = 0;
+        u16 attrib2 = 0;
+        u32 dispCnt = 0;
+        std::vector<uint8_t> rgba; // decoded RGBA sprite pixels
+    };
+
+    void DecodeSpriteForDump(Unit& unit, SpriteBuildState& build);
 };
 
 }

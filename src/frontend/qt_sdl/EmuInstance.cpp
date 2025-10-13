@@ -52,6 +52,7 @@
 // High-res texture dump/replacement (OpenGL backends)
 #ifdef OGLRENDERER_ENABLED
 #include "video/hirez/TexDump.h"
+#include "video/hirez/SpriteDump.h"
 #endif
 
 using std::make_unique;
@@ -1911,6 +1912,26 @@ bool EmuInstance::loadROM(QStringList filepath, bool reset, QString& errorstr)
             gameId = baseAssetName;
         }
         melonDS::hires::Init(cfg, gameId);
+
+        const bool wantsSpriteModule = (globalCfg.GetInt("3D.Renderer") == renderer3D_OpenGLCompute);
+        if (wantsSpriteModule)
+        {
+            melonDS::sprites::SpriteDumpConfig scfg;
+            bool spriteDump = globalCfg.GetBool("2D.SpriteDump");
+            bool spriteReplace = globalCfg.GetBool("2D.SpriteReplace");
+            if (const char* d = std::getenv("MELONDS_SPRITE_DUMP")) spriteDump = (*d != '0');
+            if (const char* r = std::getenv("MELONDS_SPRITE_REPLACE")) spriteReplace = (*r != '0');
+            scfg.enableDump = spriteDump;
+            scfg.enableReplace = spriteReplace;
+            if (const char* dd = std::getenv("MELONDS_SPRITE_DUMP_DIR")) scfg.dumpDir = dd;
+            if (const char* ld = std::getenv("MELONDS_SPRITE_LOAD_DIR")) scfg.loadDir = ld;
+            if (const char* swap = std::getenv("MELONDS_SPRITE_SWAP_RB")) scfg.swapRB = (*swap != '0');
+            melonDS::sprites::Init(scfg, gameId);
+        }
+        else
+        {
+            melonDS::sprites::Shutdown();
+        }
     }
     #endif
 
@@ -2014,6 +2035,7 @@ void EmuInstance::ejectCart()
     // Shutdown hires texture system when game is ejected
     #ifdef OGLRENDERER_ENABLED
     melonDS::hires::Shutdown();
+    melonDS::sprites::Shutdown();
     #endif
 
     if (emuIsActive())

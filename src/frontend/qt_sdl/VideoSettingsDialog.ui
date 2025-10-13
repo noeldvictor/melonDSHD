@@ -63,20 +63,6 @@
         </property>
        </widget>
       </item>
-      <item row="6" column="0">
-       <widget class="QCheckBox" name="cbHirezDump">
-        <property name="text">
-         <string>Dump 3D textures for HD packs(opengl compute shader only)</string>
-        </property>
-       </widget>
-      </item>
-      <item row="7" column="0">
-       <widget class="QCheckBox" name="cbHirezReplace">
-        <property name="text">
-         <string>Use HD texture replacements (opengl compute shader only)</string>
-        </property>
-       </widget>
-      </item>
       <item row="4" column="0">
        <widget class="QLabel" name="labelDumpPath">
         <property name="text">
@@ -128,6 +114,88 @@
         </property>
         <property name="toolTip">
          <string>Open the texture load folder</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="0">
+       <widget class="QLabel" name="labelSpriteDumpPath">
+        <property name="text">
+         <string>Sprite dump folder:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="1">
+       <widget class="QLabel" name="lblSpriteDumpFolder">
+        <property name="text">
+         <string notr="true">User/Dump/Sprites</string>
+        </property>
+        <property name="textInteractionFlags">
+         <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="2">
+       <widget class="QPushButton" name="btnOpenSpriteDumpFolder">
+        <property name="text">
+         <string>Open</string>
+        </property>
+        <property name="toolTip">
+         <string>Open the sprite dump folder</string>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="0">
+       <widget class="QLabel" name="labelSpriteLoadPath">
+        <property name="text">
+         <string>Sprite load folder:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="1">
+       <widget class="QLabel" name="lblSpriteLoadFolder">
+        <property name="text">
+         <string notr="true">User/Load/Sprites</string>
+        </property>
+        <property name="textInteractionFlags">
+         <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="2">
+       <widget class="QPushButton" name="btnOpenSpriteLoadFolder">
+        <property name="text">
+         <string>Open</string>
+        </property>
+        <property name="toolTip">
+         <string>Open the sprite load folder</string>
+        </property>
+       </widget>
+      </item>
+      <item row="8" column="0">
+       <widget class="QCheckBox" name="cbHirezDump">
+        <property name="text">
+         <string>Dump 3D textures for HD packs (OpenGL compute shader only)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="9" column="0">
+       <widget class="QCheckBox" name="cbHirezReplace">
+        <property name="text">
+         <string>Use HD texture replacements (OpenGL compute shader only)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="10" column="0">
+       <widget class="QCheckBox" name="cbSpriteDump">
+        <property name="text">
+         <string>Dump sprites for HD packs (OpenGL compute shader only)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="11" column="0">
+       <widget class="QCheckBox" name="cbSpriteReplace">
+        <property name="text">
+         <string>Use HD sprite replacements (OpenGL compute shader only)</string>
         </property>
        </widget>
       </item>

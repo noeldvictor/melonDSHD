@@ -73,6 +73,8 @@ private slots:
     void on_cbSoftwareThreaded_stateChanged(int state);
     void on_cbHirezDump_stateChanged(int state);
     void on_cbHirezReplace_stateChanged(int state);
+    void on_cbSpriteDump_stateChanged(int state);
+    void on_cbSpriteReplace_stateChanged(int state);
 private:
     void setVsyncControlEnable(bool hasOGL);
     void updateHirezPaths();
@@ -80,6 +82,8 @@ private:
 private slots:
     void on_btnOpenDumpFolder_clicked();
     void on_btnOpenLoadFolder_clicked();
+    void on_btnOpenSpriteDumpFolder_clicked();
+    void on_btnOpenSpriteLoadFolder_clicked();
 
 private:
     void setEnabled();

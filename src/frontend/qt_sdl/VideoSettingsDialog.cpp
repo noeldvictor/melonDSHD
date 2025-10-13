@@ -73,6 +73,8 @@ VideoSettingsDialog::VideoSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     oldHiresCoordinates = cfg.GetBool("3D.GL.HiresCoordinates");
     bool oldHirezDump = cfg.GetBool("3D.HirezDump");
     bool oldHirezReplace = cfg.GetBool("3D.HirezReplace");
+    bool oldSpriteDump = cfg.GetBool("2D.SpriteDump");
+    bool oldSpriteReplace = cfg.GetBool("2D.SpriteReplace");
 
     grp3DRenderer = new QButtonGroup(this);
     grp3DRenderer->addButton(ui->rb3DSoftware, renderer3D_Software);
@@ -108,6 +110,8 @@ VideoSettingsDialog::VideoSettingsDialog(QWidget* parent) : QDialog(parent), ui(
     ui->cbxComputeHiResCoords->setChecked(oldHiresCoordinates != 0);
     ui->cbHirezDump->setChecked(oldHirezDump != 0);
     ui->cbHirezReplace->setChecked(oldHirezReplace != 0);
+    ui->cbSpriteDump->setChecked(oldSpriteDump != 0);
+    ui->cbSpriteReplace->setChecked(oldSpriteReplace != 0);
 
     if (!oldVSync)
         ui->sbVSyncInterval->setEnabled(false);
@@ -174,9 +178,20 @@ void VideoSettingsDialog::updateHirezPaths()
     auto absLoad = QDir::cleanPath(QDir::current().absoluteFilePath(loadBase));
     ui->lblDumpFolder->setText(absDump);
     ui->lblLoadFolder->setText(absLoad);
+
+    const char* sdd = std::getenv("MELONDS_SPRITE_DUMP_DIR");
+    const char* sld = std::getenv("MELONDS_SPRITE_LOAD_DIR");
+    QString spriteDumpBase = sdd ? QString::fromLocal8Bit(sdd) : QStringLiteral("User/Dump/Sprites");
+    QString spriteLoadBase = sld ? QString::fromLocal8Bit(sld) : QStringLiteral("User/Load/Sprites");
+    auto absSpriteDump = QDir::cleanPath(QDir::current().absoluteFilePath(spriteDumpBase));
+    auto absSpriteLoad = QDir::cleanPath(QDir::current().absoluteFilePath(spriteLoadBase));
+    ui->lblSpriteDumpFolder->setText(absSpriteDump);
+    ui->lblSpriteLoadFolder->setText(absSpriteLoad);
 #else
     ui->lblDumpFolder->setText("-");
     ui->lblLoadFolder->setText("-");
+    ui->lblSpriteDumpFolder->setText("-");
+    ui->lblSpriteLoadFolder->setText("-");
 #endif
 }
 
@@ -200,6 +215,40 @@ void VideoSettingsDialog::on_btnOpenDumpFolder_clicked()
 void VideoSettingsDialog::on_btnOpenLoadFolder_clicked()
 {
     QString path = ui->lblLoadFolder->text();
+    if (path.isEmpty() || path == QLatin1String("-")) return;
+    QDir dir(path);
+    if (!dir.exists()) QDir().mkpath(path);
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+#ifdef Q_OS_WIN
+        QProcess::startDetached("explorer", { QDir::toNativeSeparators(path) });
+#elif defined(Q_OS_MAC)
+        QProcess::startDetached("open", { path });
+#else
+        QProcess::startDetached("xdg-open", { path });
+#endif
+    }
+}
+
+void VideoSettingsDialog::on_btnOpenSpriteDumpFolder_clicked()
+{
+    QString path = ui->lblSpriteDumpFolder->text();
+    if (path.isEmpty() || path == QLatin1String("-")) return;
+    QDir dir(path);
+    if (!dir.exists()) QDir().mkpath(path);
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+#ifdef Q_OS_WIN
+        QProcess::startDetached("explorer", { QDir::toNativeSeparators(path) });
+#elif defined(Q_OS_MAC)
+        QProcess::startDetached("open", { path });
+#else
+        QProcess::startDetached("xdg-open", { path });
+#endif
+    }
+}
+
+void VideoSettingsDialog::on_btnOpenSpriteLoadFolder_clicked()
+{
+    QString path = ui->lblSpriteLoadFolder->text();
     if (path.isEmpty() || path == QLatin1String("-")) return;
     QDir dir(path);
     if (!dir.exists()) QDir().mkpath(path);
@@ -304,4 +353,16 @@ void VideoSettingsDialog::on_cbHirezReplace_stateChanged(int state)
 {
     auto& cfg = emuInstance->getGlobalConfig();
     cfg.SetBool("3D.HirezReplace", (state != 0));
+}
+
+void VideoSettingsDialog::on_cbSpriteDump_stateChanged(int state)
+{
+    auto& cfg = emuInstance->getGlobalConfig();
+    cfg.SetBool("2D.SpriteDump", (state != 0));
+}
+
+void VideoSettingsDialog::on_cbSpriteReplace_stateChanged(int state)
+{
+    auto& cfg = emuInstance->getGlobalConfig();
+    cfg.SetBool("2D.SpriteReplace", (state != 0));
 }
