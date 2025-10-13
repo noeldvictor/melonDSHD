@@ -21,6 +21,7 @@
 #include "GPU2D.h"
 #include "video/hirez/SpriteDump.h"
 
+#include <array>
 #include <vector>
 
 namespace melonDS
@@ -146,19 +147,19 @@ private:
 
     void DoCapture(u32 line, u32 width);
 
-    struct SpriteBuildState
+    struct SpriteReplacementState
     {
-        melonDS::sprites::ObjFmt fmt = melonDS::sprites::ObjFmt::Unknown;
+        bool hasReplacement = false;
         u32 width = 0;
         u32 height = 0;
-        u16 attrib0 = 0;
-        u16 attrib1 = 0;
-        u16 attrib2 = 0;
-        u32 dispCnt = 0;
-        std::vector<uint8_t> rgba; // decoded RGBA sprite pixels
+        std::vector<u16> colors;
     };
 
-    void DecodeSpriteForDump(Unit& unit, SpriteBuildState& build);
+    std::array<std::array<SpriteReplacementState, 128>, 2> SpriteReplacement {};
+
+    bool DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 attr2,
+                             u32 width, u32 height, std::vector<uint8_t>& rgbaOut,
+                             melonDS::sprites::ObjFmt& fmtOut);
 };
 
 }

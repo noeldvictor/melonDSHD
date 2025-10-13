@@ -23,6 +23,7 @@
 
 #include <vector>
 #include <array>
+#include <algorithm>
 
 namespace melonDS
 {
@@ -58,44 +59,57 @@ static inline u16 RGBA8To5551(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
     return out;
 }
 
-void SoftRenderer::DecodeSpriteForDump(Unit& unit, SpriteBuildState& build)
+bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 attr2,
+                                       u32 width, u32 height, std::vector<uint8_t>& rgbaOut,
+                                       melonDS::sprites::ObjFmt& fmtOut)
 {
-    const u32 width = build.width;
-    const u32 height = build.height;
-
     if (width == 0 || height == 0)
     {
-        build.rgba.clear();
-        return;
+        rgbaOut.clear();
+        return false;
     }
 
-    build.rgba.assign(size_t(width) * height * 4, 0);
+    const bool rotscale = (attr0 & 0x0100) != 0;
+    if (rotscale)
+    {
+        rgbaOut.clear();
+        return false;
+    }
+
+    if (((attr0 >> 10) & 0x3) == 3)
+        fmtOut = melonDS::sprites::ObjFmt::Bitmap;
+    else if (attr0 & 0x2000)
+        fmtOut = melonDS::sprites::ObjFmt::Pal256;
+    else
+        fmtOut = melonDS::sprites::ObjFmt::Pal16;
+
+    rgbaOut.assign(size_t(width) * height * 4, 0);
 
     u8* objvram;
     u32 objvrammask;
     unit.GetOBJVRAM(objvram, objvrammask);
 
-    const u32 dispCnt = build.dispCnt;
+    const u32 dispCnt = unit.DispCnt;
     const bool useExtPal = (dispCnt & 0x80000000) != 0;
     u16* basePal = (u16*)&GPU.Palette[unit.Num ? 0x600 : 0x200];
     u16* extPal = useExtPal ? unit.GetOBJExtPal() : nullptr;
 
-    const bool xflip = (build.attrib1 & 0x1000) != 0;
-    const bool yflip = (build.attrib1 & 0x2000) != 0;
+    const bool xflip = (attr1 & 0x1000) != 0;
+    const bool yflip = (attr1 & 0x2000) != 0;
 
-    const u32 tilenum = build.attrib2 & 0x03FF;
+    const u32 tilenum = attr2 & 0x03FF;
 
     const auto writePixel = [&](u32 destX, u32 destY, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
     {
         if (destX >= width || destY >= height) return;
         size_t idx = (size_t(destY) * width + destX) * 4;
-        build.rgba[idx + 0] = r;
-        build.rgba[idx + 1] = g;
-        build.rgba[idx + 2] = b;
-        build.rgba[idx + 3] = a;
+        rgbaOut[idx + 0] = r;
+        rgbaOut[idx + 1] = g;
+        rgbaOut[idx + 2] = b;
+        rgbaOut[idx + 3] = a;
     };
 
-    switch (build.fmt)
+    switch (fmtOut)
     {
     case melonDS::sprites::ObjFmt::Bitmap:
     {
@@ -107,15 +121,9 @@ void SoftRenderer::DecodeSpriteForDump(Unit& unit, SpriteBuildState& build)
             if (dispCnt & 0x40)
             {
                 if (dispCnt & 0x20)
-                {
-                    // reserved, render nothing
                     continue;
-                }
-                else
-                {
-                    pixelsaddr <<= (7 + ((dispCnt >> 22) & 0x1));
-                    pixelsaddr += (srcY * width * 2);
-                }
+                pixelsaddr <<= (7 + ((dispCnt >> 22) & 0x1));
+                pixelsaddr += (srcY * width * 2);
             }
             else
             {
@@ -139,11 +147,9 @@ void SoftRenderer::DecodeSpriteForDump(Unit& unit, SpriteBuildState& build)
             {
                 u16 color = *(u16*)&objvram[addr & objvrammask];
                 addr += xflip ? -2 : 2;
-
                 uint8_t r = 0, g = 0, b = 0, a = 0;
                 if (color & 0x8000)
                     Color555ToRGBA(color, r, g, b, a);
-
                 writePixel(destX, destY, r, g, b, a);
             }
         }
@@ -154,8 +160,8 @@ void SoftRenderer::DecodeSpriteForDump(Unit& unit, SpriteBuildState& build)
         const u32 wmask = width - 8;
         const bool oneDim = (dispCnt & 0x10) != 0;
         const u32 oneDimShift = (dispCnt >> 20) & 0x3;
-        const bool doubleSize = (build.attrib0 & 0x2000) != 0;
-        const u32 palBank256 = (build.attrib2 & 0xF000) >> 4;
+        const bool doubleSize = (attr0 & 0x2000) != 0;
+        const u32 palBank256 = (attr2 & 0xF000) >> 4;
 
         for (u32 destY = 0; destY < height; ++destY)
         {
@@ -213,9 +219,9 @@ void SoftRenderer::DecodeSpriteForDump(Unit& unit, SpriteBuildState& build)
         const u32 wmask = width - 8;
         const bool oneDim = (dispCnt & 0x10) != 0;
         const u32 oneDimShift = (dispCnt >> 20) & 0x3;
-        const bool doubleSize = (build.attrib0 & 0x2000) != 0;
-        const u32 palBank16 = (build.attrib2 >> 12) & 0xF;
-        const u32 palBank16Ext = (build.attrib2 & 0xF000) >> 8;
+        const bool doubleSize = (attr0 & 0x2000) != 0;
+        const u32 palBank16 = (attr2 >> 12) & 0xF;
+        const u32 palBank16Ext = (attr2 & 0xF000) >> 8;
 
         for (u32 destY = 0; destY < height; ++destY)
         {
@@ -287,9 +293,13 @@ void SoftRenderer::DecodeSpriteForDump(Unit& unit, SpriteBuildState& build)
         break;
     }
     default:
-        break;
+        rgbaOut.clear();
+        return false;
     }
+
+    return true;
 }
+
 SoftRenderer::SoftRenderer(melonDS::GPU& gpu)
     : Renderer2D(), GPU(gpu)
 {
@@ -576,7 +586,9 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
     auto processUnit = [&](Unit* unit, int idx)
     {
         if (!unit) return;
-        if (!(melonDS::sprites::DumpEnabled() || melonDS::sprites::ReplaceEnabled()))
+        const bool doDump = melonDS::sprites::DumpEnabled();
+        const bool doReplace = melonDS::sprites::ReplaceEnabled();
+        if (!doDump && !doReplace)
             return;
 
         static const u32 spritewidth[16] =
@@ -595,6 +607,7 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
         };
 
         u16* oam = (u16*)&GPU.OAM[idx ? 0x400 : 0];
+        auto& replArray = SpriteReplacement[idx];
 
         for (int i = 0; i < 128; ++i)
         {
@@ -602,7 +615,10 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
             u16 attr1 = oam[i*4 + 1];
             u16 attr2 = oam[i*4 + 2];
 
-            if ((attr0 & 0x0300) == 0x0200) // OBJ disabled (obj-window only)
+            auto& replState = replArray[i];
+            replState.hasReplacement = false;
+
+            if ((attr0 & 0x0300) == 0x0200)
                 continue;
 
             bool rotscale = (attr0 & 0x0100) != 0;
@@ -619,28 +635,104 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
                 height <<= 1;
             }
 
-            SpriteBuildState build;
+            std::vector<uint8_t> rgba;
+            melonDS::sprites::ObjFmt fmt;
+            if (!DecodeSpriteForDump(*unit, attr0, attr1, attr2, width, height, rgba, fmt))
+                continue;
 
-            build.attrib0 = attr0;
-            build.attrib1 = attr1;
-            build.attrib2 = attr2;
-            build.dispCnt = unit->DispCnt;
-            build.width = width;
-            build.height = height;
-
-            if (((attr0 >> 10) & 0x3) == 3)
-                build.fmt = melonDS::sprites::ObjFmt::Bitmap;
-            else if (attr0 & 0x2000)
-                build.fmt = melonDS::sprites::ObjFmt::Pal256;
-            else
-                build.fmt = melonDS::sprites::ObjFmt::Pal16;
-
-            DecodeSpriteForDump(*unit, build);
-
-            if (!build.rgba.empty())
+            if (fmt == melonDS::sprites::ObjFmt::Bitmap)
             {
-                auto key = melonDS::sprites::MakeKey(build.rgba.data(), build.width, build.height, build.fmt);
-                melonDS::sprites::DumpIfEnabled(key, build.rgba.data(), build.width, build.height);
+                // Skip direct-color sprites (typically 3D capture surfaces)
+                replState.hasReplacement = false;
+                continue;
+            }
+
+            if (doDump && !rgba.empty())
+            {
+                auto key = melonDS::sprites::MakeKey(rgba.data(), width, height, fmt);
+                melonDS::sprites::DumpIfEnabled(key, rgba.data(), width, height);
+            }
+
+            if (doReplace && !rotscale)
+            {
+                auto loadIntoState = [&](const std::vector<uint8_t>& keyRgba, bool adjustForFlip) -> bool
+                {
+                    std::vector<uint8_t> replData;
+                    u32 rw = width;
+                    u32 rh = height;
+                    auto key = melonDS::sprites::MakeKey(keyRgba.data(), width, height, fmt);
+                    if (!melonDS::sprites::TryLoadReplacement(key, replData, rw, rh))
+                        return false;
+                    if (rw % width || rh % height)
+                        return false;
+
+                    u32 scaleX = rw / width;
+                    u32 scaleY = rh / height;
+                    bool swapRB = melonDS::sprites::SwapRBEnabled();
+
+                    replState.colors.resize(size_t(width) * height);
+                    for (u32 y = 0; y < height; ++y)
+                    {
+                        for (u32 x = 0; x < width; ++x)
+                        {
+                            u32 sampleX = x * scaleX;
+                            u32 sampleY = y * scaleY;
+                            if (adjustForFlip)
+                            {
+                                if (attr1 & 0x1000)
+                                    sampleX = rw - scaleX * (x + 1);
+                                if (attr1 & 0x2000)
+                                    sampleY = rh - scaleY * (y + 1);
+                            }
+                            if (sampleX >= rw) sampleX = rw - 1;
+                            if (sampleY >= rh) sampleY = rh - 1;
+                            size_t srcIndex = (size_t(sampleY) * rw + sampleX) * 4;
+                            if (srcIndex + 3 >= replData.size())
+                            {
+                                replState.colors[y*width + x] = 0;
+                                continue;
+                            }
+                            uint8_t r = replData[srcIndex + (swapRB ? 2 : 0)];
+                            uint8_t g = replData[srcIndex + 1];
+                            uint8_t b = replData[srcIndex + (swapRB ? 0 : 2)];
+                            uint8_t a = replData[srcIndex + 3];
+                            replState.colors[y*width + x] = RGBA8To5551(r, g, b, a);
+                        }
+                    }
+                    replState.width = width;
+                    replState.height = height;
+                    replState.hasReplacement = true;
+                    return true;
+                };
+
+                bool loaded = loadIntoState(rgba, false);
+                if (!loaded && ((attr1 & 0x3000) != 0))
+                {
+                    std::vector<uint8_t> alt = rgba;
+                    if (attr1 & 0x1000)
+                    {
+                        for (u32 y = 0; y < height; ++y)
+                        {
+                            uint8_t* row = &alt[(size_t(y) * width) * 4];
+                            for (u32 x = 0; x < width / 2; ++x)
+                            {
+                                for (int c = 0; c < 4; ++c)
+                                    std::swap(row[x*4 + c], row[(width-1-x)*4 + c]);
+                            }
+                        }
+                    }
+                    if (attr1 & 0x2000)
+                    {
+                        for (u32 y = 0; y < height / 2; ++y)
+                        {
+                            uint8_t* rowTop = &alt[(size_t(y) * width) * 4];
+                            uint8_t* rowBottom = &alt[(size_t(height-1-y) * width) * 4];
+                            for (u32 x = 0; x < width * 4; ++x)
+                                std::swap(rowTop[x], rowBottom[x]);
+                        }
+                    }
+                    loaded = loadIntoState(alt, true);
+                }
             }
         }
     };
@@ -2275,6 +2367,17 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
 
     u32 wmask = width - 8; // really ((width - 1) & ~0x7)
     const bool xflip = (attrib[1] & 0x1000) != 0;
+    const bool yflip = (attrib[1] & 0x2000) != 0;
+
+    const SpriteReplacementState* replacement = nullptr;
+    if (melonDS::sprites::ReplaceEnabled())
+    {
+        const auto& replState = SpriteReplacement[CurUnit->Num][num];
+        if (replState.hasReplacement && replState.width == width && replState.height == height)
+            replacement = &replState;
+    }
+
+    const u32 directMask = pixelattr & 0xFFFF0000;
 
     if ((attrib[0] & 0x1000) && !window)
     {
@@ -2296,8 +2399,17 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
     u32 palBank16Ext = (attrib[2] & 0xF000) >> 8;
     u32 palBank256 = (attrib[2] & 0xF000) >> 4;
 
+    const auto sampleReplacement = [&](u32 localX, u32 localY) -> u16
+    {
+        if (!replacement)
+            return 0;
+        if (localX >= replacement->width || localY >= replacement->height)
+            return 0;
+        return replacement->colors[localY * replacement->width + localX];
+    };
+
     // yflip
-    if (attrib[1] & 0x2000)
+    if (yflip)
         ypos = height-1 - ypos;
 
     u32 xoff;
@@ -2378,10 +2490,20 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
 
             pixelsaddr += pixelstride;
 
+            if (replacement)
+            {
+                u16 replColor = sampleReplacement(localX, localY);
+                if (replColor)
+                    color = replColor;
+                else
+                    color = 0;
+            }
+
             if (color & 0x8000)
             {
                 if (window) objWindow[xpos] = 1;
-                else        objLine[xpos] = color | pixelattr;
+                else        objLine[xpos] = replacement ? ((color & 0x7FFF) | 0x8000 | directMask)
+                                                        : (color | pixelattr);
             }
             else if (!window)
             {
@@ -2447,6 +2569,26 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
 
                 pixelsaddr += pixelstride;
 
+                if (replacement)
+                {
+                    u16 replColor = sampleReplacement(localX, localY);
+                    if (replColor)
+                    {
+                        if (window) objWindow[xpos] = 1;
+                        else        objLine[xpos] = (replColor & 0x7FFF) | 0x8000 | directMask;
+                    }
+                    else if (!window)
+                    {
+                        if (objLine[xpos] == 0)
+                            objLine[xpos] = pixelattr & 0x180000;
+                    }
+
+                    xoff++;
+                    xpos++;
+                    if (!(xoff & 0x7)) pixelsaddr += (56 * pixelstride);
+                    continue;
+                }
+
                 if (color)
                 {
                     if (window) objWindow[xpos] = 1;
@@ -2507,6 +2649,26 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
                 {
                     if (xoff & 0x1) { color = objvram[pixelsaddr & objvrammask] >> 4; pixelsaddr++; }
                     else              color = objvram[pixelsaddr & objvrammask] & 0x0F;
+                }
+
+                if (replacement)
+                {
+                    u16 replColor = sampleReplacement(localX, localY);
+                    if (replColor)
+                    {
+                        if (window) objWindow[xpos] = 1;
+                        else        objLine[xpos] = (replColor & 0x7FFF) | 0x8000 | directMask;
+                    }
+                    else if (!window)
+                    {
+                        if (objLine[xpos] == 0)
+                            objLine[xpos] = pixelattr & 0x180000;
+                    }
+
+                    xoff++;
+                    xpos++;
+                    if (!(xoff & 0x7)) pixelsaddr += ((attrib[1] & 0x1000) ? -28 : 28);
+                    continue;
                 }
 
                 if (color)
