@@ -15,7 +15,12 @@ struct SpriteDumpConfig {
     bool enableReplace = true; // allow replacement lookups (call sites can gate usage)
     bool swapRB = false; // optional: swap R/B when converting replacements
     std::filesystem::path dumpDir = "User/Dump/Sprites";
+    std::filesystem::path fontDumpDir = "User/Dump/Fonts";
     std::filesystem::path loadDir = "User/Load/Sprites";
+    bool dumpTextSprites = true;
+    bool useTextHeuristic = false;
+    bool skipDynamic = true; // avoid dumping sprites that appear freshly-written every frame
+    uint32_t dynamicAgeThresholdFrames = 120; // frames since last VRAM write required before dumping (~2s at 60fps)
 #ifndef SPRITEDUMP_WITH_STB
 #define SPRITEDUMP_WITH_STB 0
 #endif
@@ -37,6 +42,7 @@ void Shutdown();
 
 SpriteKey MakeKey(const uint8_t* rgba, uint32_t w, uint32_t h, ObjFmt fmt);
 void DumpIfEnabled(const SpriteKey& key, const uint8_t* rgba, uint32_t w, uint32_t h);
+void DumpTextSprite(const SpriteKey& key, const uint8_t* rgba, uint32_t w, uint32_t h);
 std::string KeyToFilename(const SpriteKey& key, bool pngExt);
 
 // Try to load a replacement image (RGBA8). Returns true on success.
@@ -46,5 +52,11 @@ bool TryLoadReplacement(const SpriteKey& key, std::vector<uint8_t>& rgbaOut, uin
 bool DumpEnabled();
 bool ReplaceEnabled();
 bool SwapRBEnabled();
+bool DumpTextEnabled();
+bool SkipDynamicEnabled();
+uint32_t DynamicAgeThresholdFrames();
+bool TextHeuristicEnabled();
+void MarkTextSpriteHash(uint64_t hash);
+bool IsTextSpriteHash(uint64_t hash);
 
 } // namespace melonDS::sprites

@@ -14,6 +14,7 @@
 #include <thread>
 #include <deque>
 #include <optional>
+#include <functional>
 
 // If you have stb available, set these to 1 to dump/load PNG.
 // Otherwise, we’ll use our built-in tiny TGA writer/reader.
@@ -86,15 +87,24 @@ void SetGameId(const std::string& gameId);
 
 // Given decoded texture RGBA8, generate a key.
 // The hasher includes width/height/flags/fmt and the RGBA contents.
-TextureKey MakeKey(const uint8_t* rgba, uint32_t w, uint32_t h, bool hasMips, bool pal0Transparent, DsiTexFmt fmt);
+TextureKey MakeKey(const uint8_t* rgba, uint32_t w, uint32_t h, bool hasMips,
+                   bool pal0Transparent, DsiTexFmt fmt,
+                   std::optional<uint64_t> paletteInvariantHash = std::nullopt);
 
 // Enqueue a dump (non-blocking). Safe to call on GL/emu thread.
-void DumpIfEnabled(const TextureKey& key, const uint8_t* rgba, uint32_t w, uint32_t h);
+using PaletteIndexGenerator = std::function<bool(std::vector<uint8_t>&, std::string&, std::string&)>;
+
+void DumpIfEnabled(const TextureKey& key, const uint8_t* rgba, uint32_t w, uint32_t h,
+                   std::optional<uint64_t> paletteHash = std::nullopt,
+                   const uint32_t* paletteRGBA = nullptr, uint32_t paletteCount = 0,
+                   PaletteIndexGenerator paletteIndexGenerator = {});
 
 // Try to synchronously load a replacement (CPU only). GL upload happens at call site.
 // If found, returns true and fills rgbaOut (RGBA8) and outW/outH.
 // Guaranteed non-blocking on GL thread except for filesystem stat/read; heavy decoding is avoided unless present.
-bool TryLoadReplacement(const TextureKey& key, std::vector<uint8_t>& rgbaOut, uint32_t& outW, uint32_t& outH);
+bool TryLoadReplacement(const TextureKey& key, std::vector<uint8_t>& rgbaOut, uint32_t& outW, uint32_t& outH,
+                        std::optional<uint64_t> paletteHash = std::nullopt,
+                        std::string* usedFilename = nullptr);
 
 // Utility helpers for naming.
 std::string KeyToFilename(const TextureKey& key, bool pngExt);

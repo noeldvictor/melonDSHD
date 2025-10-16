@@ -15,21 +15,23 @@ namespace melonDS::sprites {
 
 static SpriteDumpConfig G;
 static std::string GGameId;
-static std::unordered_set<std::string> Seen;
+static std::unordered_set<std::string> SeenRegular;
+static std::unordered_set<std::string> SeenText;
+static std::unordered_set<uint64_t> TextHashCache;
 struct CacheEntry { std::vector<uint8_t> rgba; uint32_t w=0, h=0; size_t size() const { return rgba.size(); } };
 static std::unordered_map<std::string, CacheEntry> Cache; // cache by absolute filename
-
 static inline uint64_t fnv1a64(const void* data, size_t len, uint64_t seed = 1469598103934665603ull) {
     const uint8_t* p = (const uint8_t*)data; uint64_t h=seed; for (size_t i=0;i<len;i++){ h ^= p[i]; h *= 1099511628211ull; } return h;
 }
 static inline std::string to_hex(uint64_t x){ static const char* d="0123456789abcdef"; std::string s(16,'0'); for(int i=15;i>=0;--i){ s[i]=d[x&0xF]; x>>=4;} return s; }
 
-void Init(const SpriteDumpConfig& cfg, const std::string& gameId){ G=cfg; GGameId=gameId; Seen.clear(); Cache.clear(); }
-void Shutdown(){ Seen.clear(); Cache.clear(); }
+void Init(const SpriteDumpConfig& cfg, const std::string& gameId){ G=cfg; GGameId=gameId; SeenRegular.clear(); SeenText.clear(); TextHashCache.clear(); Cache.clear(); }
+void Shutdown(){ SeenRegular.clear(); SeenText.clear(); TextHashCache.clear(); Cache.clear(); }
 
 SpriteKey MakeKey(const uint8_t* rgba, uint32_t w, uint32_t h, ObjFmt fmt){ uint64_t h1=fnv1a64(rgba, size_t(w)*h*4); return SpriteKey{h1,w,h,fmt}; }
 
 static fs::path GameDumpDir(){ return G.dumpDir / (GGameId.empty()? fs::path("Unknown"): fs::path(GGameId)); }
+static fs::path GameFontDumpDir(){ return G.fontDumpDir / (GGameId.empty()? fs::path("Unknown"): fs::path(GGameId)); }
 static fs::path GameLoadDir(){ return G.loadDir / (GGameId.empty()? fs::path("Unknown"): fs::path(GGameId)); }
 
 static const char* fmt_name(ObjFmt f){ switch(f){ case ObjFmt::Pal16:return "pal16"; case ObjFmt::Pal256:return "pal256"; case ObjFmt::Bitmap:return "bitmap"; default:return "unk"; } }
@@ -43,15 +45,51 @@ static bool write_tga(const fs::path& p, const uint8_t* rgba, uint32_t w, uint32
     std::error_code ec; fs::create_directories(p.parent_path(), ec); std::ofstream f(p, std::ios::binary); if(!f) return false; f.write((const char*)buf.data(), buf.size()); return (bool)f;
 }
 
+static void DumpSpriteToDir(const SpriteKey& key, const uint8_t* rgba, uint32_t w, uint32_t h,
+                            const fs::path& baseDir, std::unordered_set<std::string>& seen)
+{
+    if (key.fmt == ObjFmt::Bitmap)
+        return;
+    if (w == 0 || h == 0 || rgba == nullptr)
+        return;
+
+    bool png = G.writePNG;
+    fs::path dst = baseDir / KeyToFilename(key, png);
+    std::string pathStr = dst.string();
+    if (seen.count(pathStr))
+        return;
+
+    std::error_code ec;
+    if (fs::exists(dst, ec)) {
+        seen.insert(pathStr);
+        return;
+    }
+
+#if SPRITEDUMP_WITH_STB
+    if (png) {
+        fs::create_directories(dst.parent_path(), ec);
+        if (stbi_write_png(dst.string().c_str(), w, h, 4, rgba, int(w*4)) != 0)
+            seen.insert(pathStr);
+        return;
+    }
+#endif
+    if (write_tga(dst, rgba, w, h))
+        seen.insert(pathStr);
+}
+
 void DumpIfEnabled(const SpriteKey& key, const uint8_t* rgba, uint32_t w, uint32_t h){
     if (!G.enableDump) return;
-    bool png = G.writePNG;
-    fs::path dst = GameDumpDir() / KeyToFilename(key, png);
-    std::string s = dst.string(); if (Seen.count(s)) return; std::error_code ec; if (fs::exists(dst, ec)) { Seen.insert(s); return; }
-#if SPRITEDUMP_WITH_STB
-    if (png){ fs::create_directories(dst.parent_path(), ec); stbi_write_png(dst.string().c_str(), w, h, 4, rgba, int(w*4)); Seen.insert(s); return; }
-#endif
-    if (write_tga(dst, rgba, w, h)) Seen.insert(s);
+    if (IsTextSpriteHash(key.hash64)) {
+        if (G.dumpTextSprites)
+            DumpSpriteToDir(key, rgba, w, h, GameFontDumpDir(), SeenText);
+        return;
+    }
+    DumpSpriteToDir(key, rgba, w, h, GameDumpDir(), SeenRegular);
+}
+
+void DumpTextSprite(const SpriteKey& key, const uint8_t* rgba, uint32_t w, uint32_t h){
+    if (!G.dumpTextSprites) return;
+    DumpSpriteToDir(key, rgba, w, h, GameFontDumpDir(), SeenText);
 }
 
 // Minimal TGA reader (BGRA24/32) reused from TexDump.cpp, adapted to local namespace
@@ -157,8 +195,15 @@ bool TryLoadReplacement(const SpriteKey& key, std::vector<uint8_t>& rgbaOut, uin
     return false;
 }
 
+
 bool DumpEnabled(){ return G.enableDump; }
 bool ReplaceEnabled(){ return G.enableReplace; }
 bool SwapRBEnabled(){ return G.swapRB; }
+bool DumpTextEnabled(){ return G.dumpTextSprites; }
+bool SkipDynamicEnabled(){ return G.skipDynamic; }
+uint32_t DynamicAgeThresholdFrames(){ return G.dynamicAgeThresholdFrames; }
+bool TextHeuristicEnabled(){ return G.useTextHeuristic; }
+void MarkTextSpriteHash(uint64_t hash){ TextHashCache.insert(hash); }
+bool IsTextSpriteHash(uint64_t hash){ return TextHashCache.find(hash) != TextHashCache.end(); }
 
 } // namespace

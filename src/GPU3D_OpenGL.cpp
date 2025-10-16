@@ -21,6 +21,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <optional>
+#include <string>
 #include "NDS.h"
 #include "GPU.h"
 #include "GPU3D_OpenGL_shaders.h"
@@ -1377,6 +1379,30 @@ void GLRenderer::RenderFrame(GPU& gpu)
                     continue;
                 }
 
+                auto paletteInvariantHash = [&]() -> std::optional<uint64_t>
+                {
+                    switch (fmt)
+                    {
+                        case 1:
+                        case 6:
+                            return HashTextureVRAM(gpu, addr, width * height);
+                        case 2:
+                            return HashTextureVRAM(gpu, addr, (width * height) / 4);
+                        case 3:
+                            return HashTextureVRAM(gpu, addr, (width * height) / 2);
+                        case 4:
+                            return HashTextureVRAM(gpu, addr, width * height);
+                        default:
+                            return std::nullopt;
+                    }
+                }();
+
+                std::optional<uint64_t> paletteHash;
+                std::vector<uint32_t> paletteRGBA;
+                u32 palAddrForDump = 0;
+                u32 auxAddrForDump = 0;
+                bool havePaletteIndices = false;
+
                 // Decode to RGBA8 using the shared converters
                 std::vector<u32> rgba(width*height);
                 if (fmt == 7)
@@ -1390,19 +1416,46 @@ void GLRenderer::RenderFrame(GPU& gpu)
                         slot1addr += 0x10000;
                     u32 palAddr = palBase*16;
                     ConvertCompressedTexture<outputFmt_RGBA8>(width, height, rgba.data(), addr, slot1addr, palAddr, gpu);
+                    auxAddrForDump = slot1addr;
+                    palAddrForDump = palAddr;
+                    havePaletteIndices = true;
+                    paletteHash = BuildPaletteData(gpu, palAddr, 0x10000 / 2, false, paletteRGBA);
                 }
                 else
                 {
                     u32 palAddr = palBase*16;
+                    u32 numPalEntries = 0;
                     bool color0Transparent = attr & (1 << 29);
                     switch (fmt)
                     {
-                        case 1: ConvertAXIYTexture<outputFmt_RGBA8, 3, 5>(width, height, rgba.data(), addr, palAddr, gpu); break;
-                        case 6: ConvertAXIYTexture<outputFmt_RGBA8, 5, 3>(width, height, rgba.data(), addr, palAddr, gpu); break;
-                        case 2: ConvertNColorsTexture<outputFmt_RGBA8, 2>(width, height, rgba.data(), addr, palAddr >> 1, color0Transparent, gpu); break;
-                        case 3: ConvertNColorsTexture<outputFmt_RGBA8, 4>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
-                        case 4: ConvertNColorsTexture<outputFmt_RGBA8, 8>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu); break;
+                        case 1:
+                            numPalEntries = 32;
+                            ConvertAXIYTexture<outputFmt_RGBA8, 3, 5>(width, height, rgba.data(), addr, palAddr, gpu);
+                            break;
+                        case 6:
+                            numPalEntries = 8;
+                            ConvertAXIYTexture<outputFmt_RGBA8, 5, 3>(width, height, rgba.data(), addr, palAddr, gpu);
+                            break;
+                        case 2:
+                            numPalEntries = 4;
+                            palAddr >>= 1;
+                            ConvertNColorsTexture<outputFmt_RGBA8, 2>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu);
+                            break;
+                        case 3:
+                            numPalEntries = 16;
+                            ConvertNColorsTexture<outputFmt_RGBA8, 4>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu);
+                            break;
+                        case 4:
+                            numPalEntries = 256;
+                            ConvertNColorsTexture<outputFmt_RGBA8, 8>(width, height, rgba.data(), addr, palAddr, color0Transparent, gpu);
+                            break;
                         default: break;
+                    }
+                    if (numPalEntries)
+                    {
+                        paletteHash = BuildPaletteData(gpu, palAddr, numPalEntries, color0Transparent, paletteRGBA);
+                        palAddrForDump = palAddr;
+                        havePaletteIndices = true;
                     }
                 }
 
@@ -1422,17 +1475,31 @@ void GLRenderer::RenderFrame(GPU& gpu)
 
                 // Dump and try replacement
                 const uint8_t* rgbaBytes = reinterpret_cast<const uint8_t*>(rgba.data());
-                auto key = melonDS::hires::MakeKey(rgbaBytes, width, height, false, pal0Transparent, fmtTag);
-                melonDS::hires::DumpIfEnabled(key, rgbaBytes, width, height);
+                auto key = melonDS::hires::MakeKey(rgbaBytes, width, height, false,
+                                                   pal0Transparent, fmtTag, paletteInvariantHash);
+                melonDS::hires::PaletteIndexGenerator paletteIndexGenerator;
+                if (melonDS::hires::DumpEnabled() && paletteHash && havePaletteIndices) {
+                    paletteIndexGenerator = [fmt, width, height, addr, auxAddrForDump, palAddrForDump, &gpu]
+                                             (std::vector<uint8_t>& data, std::string& format, std::string& encoding) {
+                        return BuildPaletteIndexMap(gpu, fmt, width, height, addr, auxAddrForDump, palAddrForDump,
+                                                     data, format, encoding);
+                    };
+                }
+                melonDS::hires::DumpIfEnabled(key, rgbaBytes, width, height,
+                                              paletteHash,
+                                              paletteHash ? paletteRGBA.data() : nullptr,
+                                              paletteHash ? static_cast<uint32_t>(paletteRGBA.size()) : 0,
+                                              std::move(paletteIndexGenerator));
 
                 std::vector<uint8_t> repl;
                 u32 rw=width, rh=height;
-                if (melonDS::hires::TryLoadReplacement(key, repl, rw, rh))
+                std::string usedFile;
+                if (melonDS::hires::TryLoadReplacement(key, repl, rw, rh, paletteHash, &usedFile))
                 {
                     // Accept only integer multiples
                     if (rw % width == 0 && rh % height == 0 && (rw/width) == (rh/height))
                     {
-                        std::string fname = melonDS::hires::KeyToFilename(key, melonDS::hires::TexDumpConfig{}.writePNG);
+                        std::string fname = usedFile.empty() ? melonDS::hires::KeyToFilename(key, false) : usedFile;
                         GLuint texid = 0;
                         auto it = HiresTexCache.find(fname);
                         if (it != HiresTexCache.end())

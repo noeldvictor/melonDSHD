@@ -7,6 +7,8 @@
 #include <assert.h>
 #include <unordered_map>
 #include <vector>
+#include <optional>
+#include <string>
 
 // Optional high-res texture dump/replacement
 #include "video/hirez/TexDump.h"
@@ -16,6 +18,14 @@
 
 namespace melonDS
 {
+
+uint64_t HashTextureVRAM(GPU& gpu, u32 addr, u32 size);
+uint64_t BuildPaletteData(GPU& gpu, u32 palAddr, u32 count, bool color0Transparent, std::vector<uint32_t>& outRGBA);
+bool BuildPaletteIndexMap(GPU& gpu, u32 fmt, u32 width, u32 height,
+                          u32 texAddr, u32 auxAddr, u32 palAddr,
+                          std::vector<uint8_t>& outIndices,
+                          std::string& outFormat,
+                          std::string& outEncoding);
 
 inline u32 TextureWidth(u32 texparam)
 {
@@ -186,6 +196,10 @@ public:
         entry.WidthLog2 = widthLog2;
         entry.HeightLog2 = heightLog2;
 
+        std::optional<uint64_t> paletteInvariantHash;
+        std::optional<uint64_t> paletteHash;
+        std::vector<uint32_t> paletteRGBA;
+
         // apparently a new texture
         if (fmt == 7)
         {
@@ -206,6 +220,8 @@ public:
             entry.TexPalSize = 0x10000;
 
             ConvertCompressedTexture<outputFmt_RGB6A5>(width, height, DecodingBuffer, addr, slot1addr, entry.TexPalStart, gpu);
+            paletteInvariantHash = HashTextureVRAM(gpu, addr, entry.TextureRAMSize[0]);
+            paletteHash = BuildPaletteData(gpu, entry.TexPalStart, entry.TexPalSize / 2, false, paletteRGBA);
         }
         else
         {
@@ -240,6 +256,9 @@ public:
             case 3: ConvertNColorsTexture<outputFmt_RGB6A5, 4>(width, height, DecodingBuffer, addr, palAddr, color0Transparent, gpu); break;
             case 4: ConvertNColorsTexture<outputFmt_RGB6A5, 8>(width, height, DecodingBuffer, addr, palAddr, color0Transparent, gpu); break;
             }
+
+            paletteInvariantHash = HashTextureVRAM(gpu, addr, texSize);
+            paletteHash = BuildPaletteData(gpu, palAddr, numPalEntries, color0Transparent, paletteRGBA);
         }
 
         // Hi-res texture dump & replacement (compute path integration)
@@ -279,11 +298,13 @@ public:
             }
 
             bool pal0Transparent = (fmt >= 2 && fmt <= 4) && (texParam & (1<<29));
-            melonDS::hires::TextureKey key = melonDS::hires::MakeKey(hiresRGBA.data(), width, height, /*hasMips*/false, pal0Transparent, fmtTag);
+            melonDS::hires::TextureKey key = melonDS::hires::MakeKey(hiresRGBA.data(), width, height,
+                                                                     /*hasMips*/false, pal0Transparent, fmtTag,
+                                                                     paletteInvariantHash);
 
             // Try load replacement (RGBA8). For compute path, we currently only support same-size replacement
             std::vector<u8> replRGBA; u32 rw=width, rh=height;
-            if (melonDS::hires::TryLoadReplacement(key, replRGBA, rw, rh) && rw == width && rh == height) {
+            if (melonDS::hires::TryLoadReplacement(key, replRGBA, rw, rh, paletteHash) && rw == width && rh == height) {
                 // Convert RGBA8 -> RGB6A5 packed (match DecodingBuffer format)
                 for (size_t i = 0, N = size_t(width)*height; i < N; ++i) {
                     u8 r8 = replRGBA[i*4+0];
@@ -300,7 +321,21 @@ public:
             }
 
             // Async dump (final image: replacement if used, else original)
-            melonDS::hires::DumpIfEnabled(key, hiresRGBA.data(), width, height);
+            melonDS::hires::PaletteIndexGenerator paletteIndexGenerator;
+            if (melonDS::hires::DumpEnabled() && paletteHash && !paletteRGBA.empty()) {
+                u32 auxAddr = (fmt == 5) ? entry.TextureRAMStart[1] : 0u;
+                paletteIndexGenerator = [fmt, width, height, addr, auxAddr, palStart = entry.TexPalStart, &gpu]
+                                         (std::vector<uint8_t>& data, std::string& format, std::string& encoding) {
+                    if (BuildPaletteIndexMap(gpu, fmt, width, height, addr, auxAddr, palStart, data, format, encoding))
+                        return true;
+                    return false;
+                };
+            }
+            melonDS::hires::DumpIfEnabled(key, hiresRGBA.data(), width, height,
+                                          paletteHash,
+                                          paletteHash ? paletteRGBA.data() : nullptr,
+                                          paletteHash ? static_cast<uint32_t>(paletteRGBA.size()) : 0,
+                                          std::move(paletteIndexGenerator));
         }
 
         for (int i = 0; i < 2; i++)

@@ -1924,8 +1924,18 @@ bool EmuInstance::loadROM(QStringList filepath, bool reset, QString& errorstr)
             scfg.enableDump = spriteDump;
             scfg.enableReplace = spriteReplace;
             if (const char* dd = std::getenv("MELONDS_SPRITE_DUMP_DIR")) scfg.dumpDir = dd;
+            if (const char* fd = std::getenv("MELONDS_SPRITE_FONT_DIR")) scfg.fontDumpDir = fd;
             if (const char* ld = std::getenv("MELONDS_SPRITE_LOAD_DIR")) scfg.loadDir = ld;
             if (const char* swap = std::getenv("MELONDS_SPRITE_SWAP_RB")) scfg.swapRB = (*swap != '0');
+            if (const char* text = std::getenv("MELONDS_SPRITE_DUMP_TEXT")) scfg.dumpTextSprites = (*text != '0');
+            if (const char* textheur = std::getenv("MELONDS_SPRITE_TEXT_HEURISTIC")) scfg.useTextHeuristic = (*textheur != '0');
+            if (const char* skip = std::getenv("MELONDS_SPRITE_SKIP_DYNAMIC")) scfg.skipDynamic = (*skip != '0');
+            if (const char* age = std::getenv("MELONDS_SPRITE_DYNAMIC_AGE")) {
+                char* end = nullptr;
+                long val = std::strtol(age, &end, 10);
+                if (end != age && val >= 0)
+                    scfg.dynamicAgeThresholdFrames = static_cast<uint32_t>(val);
+            }
             melonDS::sprites::Init(scfg, gameId);
         }
         else

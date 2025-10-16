@@ -289,7 +289,8 @@ void GPU::AssignFramebuffers() noexcept
     auto makeOverlaySurface = [&](int screen) -> GPU2D::SpriteOverlaySurface
     {
         GPU2D::SpriteOverlaySurface surface;
-        if (SpriteOverlayStride && SpriteOverlayScreenHeight && SpriteOverlayScaleX > 1 && SpriteOverlayScaleY > 1)
+    if (SpriteOverlayStride && SpriteOverlayScreenHeight &&
+        (SpriteOverlayScaleX > 1 || SpriteOverlayScaleY > 1))
         {
             if (SpriteOverlay[backbuf][screen])
             {
@@ -326,7 +327,7 @@ void GPU::EnsureHiResSpriteBuffers(u32 scaleX, u32 scaleY) noexcept
 {
     bool overlayChanged = false;
 
-    if (scaleX <= 1 || scaleY <= 1)
+    if (scaleX <= 1 && scaleY <= 1)
     {
         if (SpriteOverlayStride || SpriteOverlayScreenHeight || SpriteOverlayScaleX != 1 || SpriteOverlayScaleY != 1)
             overlayChanged = true;

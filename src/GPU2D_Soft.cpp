@@ -26,11 +26,139 @@
 #include <array>
 #include <algorithm>
 #include <cstring>
+#include <limits>
+#include <unordered_map>
 
 namespace melonDS
 {
 namespace GPU2D
 {
+
+namespace
+{
+
+static uint64_t HashSpriteIndices(const uint8_t* data, size_t count) noexcept
+{
+    const uint64_t fnvOffset = 1469598103934665603ull;
+    const uint64_t fnvPrime = 1099511628211ull;
+    uint64_t hash = fnvOffset;
+    for (size_t i = 0; i < count; ++i)
+    {
+        hash ^= data[i];
+        hash *= fnvPrime;
+    }
+    return hash;
+}
+
+static bool ShouldSkipTextLikeSprite(const std::vector<uint8_t>& rgba, u32 width, u32 height)
+{
+    if (width < 32 || height < 16 || rgba.empty())
+        return false;
+
+    size_t solid = 0;
+    std::array<uint32_t, 16> unique{};
+    size_t uniqueCount = 0;
+    u32 minX = width, minY = height, maxX = 0, maxY = 0;
+
+    for (size_t i = 0, n = rgba.size(); i < n; i += 4)
+    {
+        uint8_t a = rgba[i + 3];
+        if (a <= 24)
+            continue;
+        ++solid;
+        if (uniqueCount < unique.size())
+        {
+            uint32_t color = (uint32_t(rgba[i]) << 16) | (uint32_t(rgba[i + 1]) << 8) | uint32_t(rgba[i + 2]);
+            bool seen = false;
+            for (size_t u = 0; u < uniqueCount; ++u)
+            {
+                if (unique[u] == color)
+                {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen)
+                unique[uniqueCount++] = color;
+        }
+        u32 pixel = static_cast<u32>(i / 4);
+        u32 y = pixel / width;
+        u32 x = pixel % width;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+    }
+
+    size_t total = size_t(width) * height;
+    if (solid == 0)
+        return true;
+
+    double coverage = double(solid) / double(total);
+    if (coverage < 0.25 && uniqueCount <= 6)
+        return true;
+
+    if (width >= 48 && height >= 24 && coverage < 0.35 && uniqueCount <= 8)
+        return true;
+
+    if (width >= 48 && uniqueCount <= 12)
+    {
+        if (coverage < 0.60)
+            return true;
+
+        u32 bboxW = (maxX >= minX) ? (maxX - minX + 1) : width;
+        u32 bboxH = (maxY >= minY) ? (maxY - minY + 1) : height;
+        double bboxArea = double(bboxW) * double(bboxH);
+        if (bboxArea < double(total) * 0.55)
+            return true;
+    }
+
+    return false;
+}
+
+struct SpriteReplacementCacheKey
+{
+    uint64_t hash = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t format = 0;
+    uint32_t paletteKey = 0;
+
+    bool operator==(const SpriteReplacementCacheKey& other) const noexcept
+    {
+        return hash == other.hash && width == other.width && height == other.height &&
+               format == other.format && paletteKey == other.paletteKey;
+    }
+};
+
+struct SpriteReplacementCacheKeyHash
+{
+    size_t operator()(const SpriteReplacementCacheKey& key) const noexcept
+    {
+        size_t h = std::hash<uint64_t>{}(key.hash);
+        h ^= std::hash<uint32_t>{}(key.width) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<uint32_t>{}(key.height) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<uint32_t>{}(key.format) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<uint32_t>{}(key.paletteKey) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+
+struct SpriteReplacementCacheEntry
+{
+    u32 baseWidth = 0;
+    u32 baseHeight = 0;
+    u32 hiWidth = 0;
+    u32 hiHeight = 0;
+    u32 scaleX = 1;
+    u32 scaleY = 1;
+    std::vector<u8> rgba;
+    std::vector<u16> fallback5551;
+};
+
+static std::unordered_map<SpriteReplacementCacheKey, SpriteReplacementCacheEntry, SpriteReplacementCacheKeyHash> gSpriteReplacementCache;
+
+} // anonymous namespace
 
 static inline void StoreRGBA(std::vector<uint8_t>& buf, u32 width, u32 x, u32 y, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
@@ -61,13 +189,56 @@ static inline u16 RGBA8To5551(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
     return out;
 }
 
+u32 SoftRenderer::GCD(u32 a, u32 b) noexcept
+{
+    if (a == 0) return b;
+    if (b == 0) return a;
+    while (b != 0)
+    {
+        u32 t = a % b;
+        a = b;
+        b = t;
+    }
+    return a;
+}
+
+u32 SoftRenderer::LCM(u32 a, u32 b) noexcept
+{
+    if (a == 0) return b;
+    if (b == 0) return a;
+    u32 g = GCD(a, b);
+    if (g == 0) return 0;
+    u64 l = (u64(a) / g) * b;
+    if (l > std::numeric_limits<u32>::max())
+        return 0;
+    return u32(l);
+}
+
 bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 attr2,
                                        u32 width, u32 height, std::vector<uint8_t>& rgbaOut,
-                                       melonDS::sprites::ObjFmt& fmtOut)
+                                       melonDS::sprites::ObjFmt& fmtOut,
+                                       std::vector<uint8_t>* indicesOut,
+                                       bool* isDynamicOut)
 {
+    if (isDynamicOut)
+        *isDynamicOut = false;
+    if (indicesOut)
+        indicesOut->clear();
+
+    bool dynamic = false;
+    bool detectDynamic = (isDynamicOut != nullptr && melonDS::sprites::SkipDynamicEnabled());
+    uint32_t dynamicThreshold = 0;
+    if (detectDynamic)
+    {
+        dynamicThreshold = melonDS::sprites::DynamicAgeThresholdFrames();
+        if (dynamicThreshold == 0 || !ObjVRAMDirtyValid[unit.Num])
+            detectDynamic = false;
+    }
+
     if (width == 0 || height == 0)
     {
         rgbaOut.clear();
+        if (indicesOut) indicesOut->clear();
         return false;
     }
 
@@ -75,6 +246,7 @@ bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 att
     if (rotscale)
     {
         rgbaOut.clear();
+        if (indicesOut) indicesOut->clear();
         return false;
     }
 
@@ -84,6 +256,9 @@ bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 att
         fmtOut = melonDS::sprites::ObjFmt::Pal256;
     else
         fmtOut = melonDS::sprites::ObjFmt::Pal16;
+
+    if (indicesOut)
+        indicesOut->assign(size_t(width) * height, 0);
 
     rgbaOut.assign(size_t(width) * height * 4, 0);
 
@@ -148,6 +323,12 @@ bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 att
             for (u32 destX = 0; destX < width; ++destX)
             {
                 u16 color = *(u16*)&objvram[addr & objvrammask];
+                if (detectDynamic && !dynamic)
+                {
+                    u32 memAddr = (u32)addr & objvrammask;
+                    if (IsOBJAddressDynamic(unit.Num, memAddr, dynamicThreshold))
+                        dynamic = true;
+                }
                 addr += xflip ? -2 : 2;
                 uint8_t r = 0, g = 0, b = 0, a = 0;
                 if (color & 0x8000)
@@ -196,6 +377,12 @@ bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 att
             for (u32 destX = 0; destX < width; ++destX)
             {
                 u8 colorIdx = objvram[addr & objvrammask];
+                if (detectDynamic && !dynamic)
+                {
+                    u32 memAddr = (u32)addr & objvrammask;
+                    if (IsOBJAddressDynamic(unit.Num, memAddr, dynamicThreshold))
+                        dynamic = true;
+                }
                 addr += pixelstride;
                 if (((destX + 1) & 0x7) == 0)
                     addr += (56 * pixelstride);
@@ -212,6 +399,8 @@ bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 att
                 }
 
                 writePixel(destX, destY, r, g, b, a);
+                if (indicesOut)
+                    (*indicesOut)[size_t(destY) * width + destX] = colorIdx;
             }
         }
         break;
@@ -249,6 +438,7 @@ bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 att
 
             for (u32 destX = 0; destX < width; ++destX)
             {
+                u32 memAddr = (u32)addr & objvrammask;
                 u8 color;
                 if (xflip)
                 {
@@ -275,6 +465,12 @@ bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 att
                     }
                 }
 
+                if (detectDynamic && !dynamic)
+                {
+                    if (IsOBJAddressDynamic(unit.Num, memAddr, dynamicThreshold))
+                        dynamic = true;
+                }
+
                 if (((destX + 1) & 0x7) == 0)
                     addr += xflip ? -28 : 28;
 
@@ -290,15 +486,20 @@ bool SoftRenderer::DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 att
                 }
 
                 writePixel(destX, destY, r, g, b, a);
+                if (indicesOut)
+                    (*indicesOut)[size_t(destY) * width + destX] = color;
             }
         }
         break;
     }
     default:
         rgbaOut.clear();
+        if (indicesOut) indicesOut->clear();
         return false;
     }
 
+    if (isDynamicOut)
+        *isDynamicOut = dynamic;
     return true;
 }
 
@@ -306,6 +507,45 @@ SoftRenderer::SoftRenderer(melonDS::GPU& gpu)
     : Renderer2D(), GPU(gpu)
 {
     // mosaic table is initialized at compile-time
+    ResetObjDirtyTracking();
+}
+
+void SoftRenderer::ResetObjDirtyTracking()
+{
+    for (auto& ages : ObjVRAMDirtyAge)
+        ages.fill(0xFFFF);
+    ObjVRAMDirtyValid[0] = ObjVRAMDirtyValid[1] = false;
+}
+
+template<typename BitField>
+void SoftRenderer::UpdateObjDirtyAges(u32 unitIdx, const BitField& dirtyBits)
+{
+    auto& ages = ObjVRAMDirtyAge[unitIdx];
+    const u32 blockCount = (unitIdx == 0) ? kObjVRAMBlocksA : kObjVRAMBlocksB;
+    for (u32 bit = 0; bit < blockCount; ++bit)
+    {
+        if (dirtyBits[bit])
+            ages[bit] = 0;
+        else if (ages[bit] < 0xFFFF)
+            ++ages[bit];
+    }
+    ObjVRAMDirtyValid[unitIdx] = true;
+}
+
+bool SoftRenderer::IsOBJAddressDynamic(u32 unitIdx, u32 address, uint32_t threshold) const
+{
+    if (!ObjVRAMDirtyValid[unitIdx] || threshold == 0)
+        return false;
+    const u32 mask = (unitIdx == 0) ? 0x3FFFF : 0x1FFFF;
+    const u32 blockCount = (unitIdx == 0) ? kObjVRAMBlocksA : kObjVRAMBlocksB;
+    constexpr u32 granularity = 512;
+    u32 block = ((address & mask) / granularity);
+    if (block >= blockCount)
+        return false;
+    u16 age = ObjVRAMDirtyAge[unitIdx][block];
+    if (age == 0xFFFF)
+        return false;
+    return age < threshold;
 }
 
 u32 SoftRenderer::ColorComposite(int i, u32 val1, u32 val2) const
@@ -611,6 +851,7 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
 
         u16* oam = (u16*)&GPU.OAM[idx ? 0x400 : 0];
         auto& replArray = SpriteReplacement[idx];
+        const bool trackDynamic = melonDS::sprites::SkipDynamicEnabled();
 
         for (int i = 0; i < 128; ++i)
         {
@@ -648,20 +889,76 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
             }
 
             std::vector<uint8_t> rgba;
+            std::vector<uint8_t> indices;
             melonDS::sprites::ObjFmt fmt;
-            if (!DecodeSpriteForDump(*unit, attr0, attr1, attr2, width, height, rgba, fmt))
+            bool dynamicSprite = false;
+            bool* dynamicPtr = (trackDynamic && (doDump || doReplace)) ? &dynamicSprite : nullptr;
+            if (!DecodeSpriteForDump(*unit, attr0, attr1, attr2, width, height, rgba, fmt, &indices, dynamicPtr))
                 continue;
 
+            if (trackDynamic && dynamicSprite)
+                continue;
             if (fmt == melonDS::sprites::ObjFmt::Bitmap)
             {
                 // Skip direct-color sprites (typically 3D capture surfaces)
                 continue;
             }
 
-            if (doDump && !rgba.empty())
+            bool keyValid = !rgba.empty();
+            melonDS::sprites::SpriteKey spriteKey{};
+            if (keyValid)
+                spriteKey = melonDS::sprites::MakeKey(rgba.data(), width, height, fmt);
+
+            bool textSprite = keyValid && melonDS::sprites::IsTextSpriteHash(spriteKey.hash64);
+            if (doDump && keyValid)
             {
-                auto key = melonDS::sprites::MakeKey(rgba.data(), width, height, fmt);
-                melonDS::sprites::DumpIfEnabled(key, rgba.data(), width, height);
+                bool newlyDetected = false;
+                if (!textSprite && melonDS::sprites::TextHeuristicEnabled())
+                {
+                    newlyDetected = ShouldSkipTextLikeSprite(rgba, width, height);
+                    if (newlyDetected)
+                    {
+                        melonDS::sprites::MarkTextSpriteHash(spriteKey.hash64);
+                        textSprite = true;
+                    }
+                }
+
+                if (textSprite)
+                {
+                    if (melonDS::sprites::DumpTextEnabled())
+                        melonDS::sprites::DumpTextSprite(spriteKey, rgba.data(), width, height);
+                }
+                else
+                {
+                    melonDS::sprites::DumpIfEnabled(spriteKey, rgba.data(), width, height);
+                }
+            }
+
+            SpriteReplacementCacheKey cacheKey{};
+            bool haveCacheKey = false;
+            if (!indices.empty() &&
+                (fmt == melonDS::sprites::ObjFmt::Pal16 || fmt == melonDS::sprites::ObjFmt::Pal256))
+            {
+                cacheKey.hash = HashSpriteIndices(indices.data(), indices.size());
+                cacheKey.width = width;
+                cacheKey.height = height;
+                cacheKey.format = (fmt == melonDS::sprites::ObjFmt::Pal16) ? 0u : 1u;
+
+                const u32 dispCnt = unit->DispCnt;
+                const bool useExtPal = (dispCnt & 0x80000000) != 0;
+                if (fmt == melonDS::sprites::ObjFmt::Pal16)
+                {
+                    const u32 palBank16 = (attr2 >> 12) & 0xF;
+                    const u32 palBank16Ext = (attr2 & 0xF000) >> 8;
+                    cacheKey.paletteKey = useExtPal ? (0x80000000u | palBank16Ext) : palBank16;
+                }
+                else
+                {
+                    const u32 palBank256 = (attr2 & 0xF000) >> 4;
+                    cacheKey.paletteKey = useExtPal ? (0x80000000u | palBank256) : palBank256;
+                }
+
+                haveCacheKey = true;
             }
 
             if (doReplace && !rotscale)
@@ -671,7 +968,7 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
                     std::vector<uint8_t> replData;
                     u32 rw = width;
                     u32 rh = height;
-                    auto key = melonDS::sprites::MakeKey(keyRgba.data(), width, height, fmt);
+                    auto key = keyValid ? spriteKey : melonDS::sprites::MakeKey(keyRgba.data(), width, height, fmt);
                     if (!melonDS::sprites::TryLoadReplacement(key, replData, rw, rh))
                         return false;
 
@@ -762,8 +1059,8 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
                     return true;
                 };
 
-                bool loaded = loadIntoState(rgba, false);
-                if (!loaded && ((attr1 & 0x3000) != 0))
+                bool replacementLoadedFromDisk = loadIntoState(rgba, false);
+                if (!replacementLoadedFromDisk && ((attr1 & 0x3000) != 0))
                 {
                     std::vector<uint8_t> alt = rgba;
                     if (attr1 & 0x1000)
@@ -788,7 +1085,42 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
                                 std::swap(rowTop[x], rowBottom[x]);
                         }
                     }
-                    loadIntoState(alt, true);
+                    replacementLoadedFromDisk = loadIntoState(alt, true);
+                }
+
+                if (!replState.hasReplacement && haveCacheKey)
+                {
+                    auto it = gSpriteReplacementCache.find(cacheKey);
+                    if (it != gSpriteReplacementCache.end())
+                    {
+                        const auto& cached = it->second;
+                        if (cached.baseWidth == width && cached.baseHeight == height)
+                        {
+                            replState.baseWidth = cached.baseWidth;
+                            replState.baseHeight = cached.baseHeight;
+                            replState.hiWidth = cached.hiWidth;
+                            replState.hiHeight = cached.hiHeight;
+                            replState.scaleX = cached.scaleX;
+                            replState.scaleY = cached.scaleY;
+                            replState.rgba = cached.rgba;
+                            replState.fallback5551 = cached.fallback5551;
+                            replState.hasReplacement = true;
+                        }
+                    }
+                }
+
+                if (replacementLoadedFromDisk && haveCacheKey && replState.hasReplacement)
+                {
+                    SpriteReplacementCacheEntry entry;
+                    entry.baseWidth = replState.baseWidth;
+                    entry.baseHeight = replState.baseHeight;
+                    entry.hiWidth = replState.hiWidth;
+                    entry.hiHeight = replState.hiHeight;
+                    entry.scaleX = replState.scaleX;
+                    entry.scaleY = replState.scaleY;
+                    entry.rgba = replState.rgba;
+                    entry.fallback5551 = replState.fallback5551;
+                    gSpriteReplacementCache[cacheKey] = std::move(entry);
                 }
             }
         }
@@ -798,15 +1130,30 @@ void SoftRenderer::VBlankEnd(Unit* unitA, Unit* unitB)
     processUnit(unitB, 1);
 
     auto [scaleX, scaleY] = DetermineOverlayScale();
-    const bool overlayActive = (scaleX > 1 && scaleY > 1);
+    const bool overlayActive = ((scaleX > 1) || (scaleY > 1));
+    static bool overlayDivWarned = false;
 
     for (auto& perUnit : SpriteReplacement)
     {
         for (auto& state : perUnit)
         {
-            state.overlayReady = (overlayActive && state.hasReplacement &&
-                                   state.scaleX == scaleX && state.scaleY == scaleY &&
-                                   !state.rgba.empty());
+            bool ready = false;
+            if (overlayActive && state.hasReplacement && !state.rgba.empty() &&
+                state.scaleX > 0 && state.scaleY > 0)
+            {
+                u32 sx = state.scaleX;
+                u32 sy = state.scaleY;
+                if ((scaleX % sx) == 0 && (scaleY % sy) == 0)
+                    ready = true;
+                else if (!overlayDivWarned && (sx > 1 || sy > 1))
+                {
+                    Platform::Log(Platform::LogLevel::Warn,
+                                  "Sprite overlay scale %ux%u cannot evenly upscale replacement (%ux%u); using 16-bit fallback\n",
+                                  scaleX, scaleY, sx, sy);
+                    overlayDivWarned = true;
+                }
+            }
+            state.overlayReady = ready;
         }
     }
 
@@ -837,30 +1184,70 @@ void SoftRenderer::SetSpriteOverlay(const SpriteOverlaySurface& unitA, const Spr
 
 std::pair<u32, u32> SoftRenderer::DetermineOverlayScale() const
 {
-    u32 scaleX = 0;
-    u32 scaleY = 0;
+    u32 scaleX = 1;
+    u32 scaleY = 1;
+    bool found = false;
+    static bool overlayClampWarned = false;
 
     for (const auto& perUnit : SpriteReplacement)
     {
         for (const auto& state : perUnit)
         {
             if (!state.hasReplacement) continue;
-            if (state.scaleX <= 1 || state.scaleY <= 1) continue;
             if (state.rgba.empty()) continue;
 
-            if (scaleX == 0 && scaleY == 0)
+            u32 sx = state.scaleX;
+            u32 sy = state.scaleY;
+
+            if (sx <= 1 && sy <= 1)
+                continue;
+
+            u32 sxBase = (sx > 0) ? sx : 1;
+            u32 syBase = (sy > 0) ? sy : 1;
+            if (sxBase > kMaxOverlayScale || syBase > kMaxOverlayScale)
             {
-                scaleX = state.scaleX;
-                scaleY = state.scaleY;
-            }
-            else if (scaleX != state.scaleX || scaleY != state.scaleY)
-            {
+                if (!overlayClampWarned)
+                {
+                    Platform::Log(Platform::LogLevel::Warn,
+                                  "Sprite overlay disabled: replacement scale %ux%u exceeds %u× limit\n",
+                                  sxBase, syBase, kMaxOverlayScale);
+                    overlayClampWarned = true;
+                }
                 return {0, 0};
+            }
+
+            if (!found)
+            {
+                scaleX = sxBase;
+                scaleY = syBase;
+                found = true;
+            }
+            else
+            {
+                u32 newScaleX = LCM(scaleX, sxBase);
+                u32 newScaleY = LCM(scaleY, syBase);
+                if (newScaleX == 0 || newScaleY == 0 ||
+                    newScaleX > kMaxOverlayScale || newScaleY > kMaxOverlayScale)
+                {
+                    if (!overlayClampWarned)
+                    {
+                        Platform::Log(Platform::LogLevel::Warn,
+                                      "Sprite overlay disabled: combined scale %ux%u exceeds %u× limit\n",
+                                      std::max(newScaleX, scaleX), std::max(newScaleY, scaleY), kMaxOverlayScale);
+                        overlayClampWarned = true;
+                    }
+                    return {0, 0};
+                }
+                scaleX = newScaleX;
+                scaleY = newScaleY;
             }
         }
     }
 
-    if (scaleX == 0 || scaleY == 0)
+    if (!found)
+        return {0, 0};
+
+    if (scaleX <= 1 && scaleY <= 1)
         return {0, 0};
 
     return {scaleX, scaleY};
@@ -918,13 +1305,18 @@ void SoftRenderer::BlitOverlayPixel(const SpriteReplacementState& state, u32 loc
         return;
     if (!state.overlayReady)
         return;
-    if (state.scaleX != CurOverlayScaleX || state.scaleY != CurOverlayScaleY)
-        return;
     if (screenX >= 256)
         return;
     if (localX >= state.baseWidth || localY >= state.baseHeight)
         return;
     if (state.rgba.empty() || state.hiWidth == 0 || state.hiHeight == 0)
+        return;
+
+    if (state.scaleX == 0 || state.scaleY == 0)
+        return;
+    if (CurOverlayScaleX == 0 || CurOverlayScaleY == 0)
+        return;
+    if ((CurOverlayScaleX % state.scaleX) != 0 || (CurOverlayScaleY % state.scaleY) != 0)
         return;
 
     const size_t dstStrideBytes = size_t(CurOverlayStride) * 4;
@@ -936,14 +1328,34 @@ void SoftRenderer::BlitOverlayPixel(const SpriteReplacementState& state, u32 loc
         return;
 
     const size_t dstBaseX = size_t(screenX) * CurOverlayScaleX;
-    if ((dstBaseX + state.scaleX) > CurOverlayStride)
+    const u32 repX = CurOverlayScaleX / state.scaleX;
+    const u32 repY = CurOverlayScaleY / state.scaleY;
+    if (repX == 0 || repY == 0)
+        return;
+
+    const size_t totalDstWidth = size_t(state.scaleX) * repX;
+    const size_t totalDstHeight = size_t(state.scaleY) * repY;
+
+    if ((dstBaseX + totalDstWidth) > CurOverlayStride)
+        return;
+    if (totalDstHeight > CurOverlayScaleY)
         return;
 
     for (u32 sy = 0; sy < state.scaleY; ++sy)
     {
-        const size_t srcIndex = (srcBaseY + sy) * srcStrideBytes + srcBaseX * 4;
-        const size_t dstIndex = sy * dstStrideBytes + dstBaseX * 4;
-        std::memcpy(CurOverlayLine + dstIndex, &state.rgba[srcIndex], size_t(state.scaleX) * 4);
+        const u8* srcRow = &state.rgba[(srcBaseY + sy) * srcStrideBytes + srcBaseX * 4];
+        for (u32 oy = 0; oy < repY; ++oy)
+        {
+            u8* dstRow = CurOverlayLine + ( (sy * repY + oy) * dstStrideBytes ) + dstBaseX * 4;
+            for (u32 sx = 0; sx < state.scaleX; ++sx)
+            {
+                const u8* srcPixel = &srcRow[sx * 4];
+                for (u32 ox = 0; ox < repX; ++ox)
+                {
+                    std::memcpy(dstRow + (sx * repX + ox) * 4, srcPixel, 4);
+                }
+            }
+        }
     }
 }
 
@@ -2233,16 +2645,23 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
 
     }
 
+    const bool trackDynamic = melonDS::sprites::SkipDynamicEnabled();
     if (CurUnit->Num == 0)
     {
         auto objDirty = GPU.VRAMDirty_AOBJ.DeriveState(GPU.VRAMMap_AOBJ, GPU);
         GPU.MakeVRAMFlat_AOBJCoherent(objDirty);
+        if (trackDynamic && line == 0)
+            UpdateObjDirtyAges(0, objDirty);
     }
     else
     {
         auto objDirty = GPU.VRAMDirty_BOBJ.DeriveState(GPU.VRAMMap_BOBJ, GPU);
         GPU.MakeVRAMFlat_BOBJCoherent(objDirty);
+        if (trackDynamic && line == 0)
+            UpdateObjDirtyAges(1, objDirty);
     }
+    if (!trackDynamic && line == 0)
+        ObjVRAMDirtyValid[CurUnit->Num] = false;
 
     NumSprites[CurUnit->Num] = 0;
     memset(OBJLine[CurUnit->Num], 0, 256*4);

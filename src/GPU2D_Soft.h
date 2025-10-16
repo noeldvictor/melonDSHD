@@ -165,6 +165,10 @@ private:
 
     std::array<std::array<SpriteReplacementState, 128>, 2> SpriteReplacement {};
 
+    static constexpr u32 kMaxOverlayScale = 8;
+    static u32 GCD(u32 a, u32 b) noexcept;
+    static u32 LCM(u32 a, u32 b) noexcept;
+
     std::pair<u32, u32> DetermineOverlayScale() const;
     void PrepareOverlayLine(u32 unitIdx, u32 line);
     void BlitOverlayPixel(const SpriteReplacementState& state, u32 localX, u32 localY, u32 screenX);
@@ -174,9 +178,21 @@ private:
     u32 CurOverlayScaleX = 1;
     u32 CurOverlayScaleY = 1;
 
+    static constexpr u32 kObjVRAMBlocksA = (256 * 1024) / 512;
+    static constexpr u32 kObjVRAMBlocksB = (128 * 1024) / 512;
+    std::array<std::array<uint16_t, kObjVRAMBlocksA>, 2> ObjVRAMDirtyAge {};
+    bool ObjVRAMDirtyValid[2] = {false, false};
+
+    void ResetObjDirtyTracking();
+    template<typename BitField>
+    void UpdateObjDirtyAges(u32 unitIdx, const BitField& dirtyBits);
+    bool IsOBJAddressDynamic(u32 unitIdx, u32 address, uint32_t threshold) const;
+
     bool DecodeSpriteForDump(Unit& unit, u16 attr0, u16 attr1, u16 attr2,
                              u32 width, u32 height, std::vector<uint8_t>& rgbaOut,
-                             melonDS::sprites::ObjFmt& fmtOut);
+                             melonDS::sprites::ObjFmt& fmtOut,
+                             std::vector<uint8_t>* indicesOut,
+                             bool* isDynamicOut);
 };
 
 }

@@ -3,6 +3,163 @@
 namespace melonDS
 {
 
+uint64_t HashTextureVRAM(GPU& gpu, u32 addr, u32 size)
+{
+    const uint64_t fnvOffset = 1469598103934665603ull;
+    const uint64_t fnvPrime = 1099511628211ull;
+    uint64_t hash = fnvOffset;
+    for (u32 i = 0; i < size; ++i)
+    {
+        u8 byte = gpu.ReadVRAMFlat_Texture<u8>(addr + i);
+        hash ^= byte;
+        hash *= fnvPrime;
+    }
+    return hash;
+}
+
+uint64_t BuildPaletteData(GPU& gpu, u32 palAddr, u32 count, bool color0Transparent, std::vector<uint32_t>& outRGBA)
+{
+    const uint64_t fnvOffset = 1469598103934665603ull;
+    const uint64_t fnvPrime = 1099511628211ull;
+    uint64_t hash = fnvOffset;
+    outRGBA.resize(count);
+    for (u32 i = 0; i < count; ++i)
+    {
+        u16 color = gpu.ReadVRAMFlat_TexPal<u16>(palAddr + i * 2);
+        u8 r5 = color & 0x1F;
+        u8 g5 = (color >> 5) & 0x1F;
+        u8 b5 = (color >> 10) & 0x1F;
+        u8 r8 = u8((int(r5) * 255 + 15) / 31);
+        u8 g8 = u8((int(g5) * 255 + 15) / 31);
+        u8 b8 = u8((int(b5) * 255 + 15) / 31);
+        u8 a8 = (color0Transparent && i == 0) ? 0 : 255;
+        uint32_t rgba = (uint32_t(r8) << 24) | (uint32_t(g8) << 16) | (uint32_t(b8) << 8) | a8;
+        outRGBA[i] = rgba;
+        hash ^= r8; hash *= fnvPrime;
+        hash ^= g8; hash *= fnvPrime;
+        hash ^= b8; hash *= fnvPrime;
+        hash ^= a8; hash *= fnvPrime;
+    }
+    return hash;
+}
+
+bool BuildPaletteIndexMap(GPU& gpu, u32 fmt, u32 width, u32 height,
+                          u32 texAddr, u32 auxAddr, u32 palAddr,
+                          std::vector<uint8_t>& outIndices,
+                          std::string& outFormat,
+                          std::string& outEncoding)
+{
+    outIndices.clear();
+    outFormat.clear();
+    outEncoding.clear();
+
+    const size_t pixelCount = size_t(width) * height;
+    if (pixelCount == 0)
+        return false;
+
+    switch (fmt)
+    {
+    case 1: // A3I5
+    {
+        outIndices.resize(pixelCount);
+        outFormat = "u8";
+        for (size_t i = 0; i < pixelCount; ++i) {
+            u8 val = gpu.ReadVRAMFlat_Texture<u8>(texAddr + u32(i));
+            outIndices[i] = val & 0x1F;
+        }
+        return true;
+    }
+    case 6: // A5I3
+    {
+        outIndices.resize(pixelCount);
+        outFormat = "u8";
+        for (size_t i = 0; i < pixelCount; ++i) {
+            u8 val = gpu.ReadVRAMFlat_Texture<u8>(texAddr + u32(i));
+            outIndices[i] = val & 0x07;
+        }
+        return true;
+    }
+    case 4: // 8bpp pal256
+    {
+        outIndices.resize(pixelCount);
+        outFormat = "u8";
+        for (u32 y = 0; y < height; ++y) {
+            for (u32 x = 0; x < width; ++x) {
+                size_t dst = size_t(y) * width + x;
+                outIndices[dst] = gpu.ReadVRAMFlat_Texture<u8>(texAddr + y * width + x);
+            }
+        }
+        return true;
+    }
+    case 3: // 4bpp pal16
+    case 2: // 2bpp pal4
+    {
+        const u32 colorBits = (fmt == 2) ? 2u : 4u;
+        const u32 pixelsPerWord = 16u / colorBits;
+        if (pixelsPerWord == 0 || (width % pixelsPerWord) != 0) {
+            return false;
+        }
+        const u32 wordsPerRow = width / pixelsPerWord;
+        const u32 mask = (1u << colorBits) - 1u;
+        outIndices.resize(pixelCount);
+        outFormat = "u8";
+        for (u32 y = 0; y < height; ++y) {
+            for (u32 word = 0; word < wordsPerRow; ++word) {
+                u16 packed = gpu.ReadVRAMFlat_Texture<u16>(texAddr + 2u * (word + y * wordsPerRow));
+                for (u32 i = 0; i < pixelsPerWord; ++i) {
+                    u32 idx = packed & mask;
+                    packed >>= colorBits;
+                    size_t dst = size_t(y) * width + word * pixelsPerWord + i;
+                    outIndices[dst] = uint8_t(idx);
+                }
+            }
+        }
+        return true;
+    }
+    case 5: // Tex4x4 compression
+    {
+        if (width % 4 != 0 || height % 4 != 0 || auxAddr == 0)
+            return false;
+
+        const u32 blocksX = width / 4;
+        const u32 blocksY = height / 4;
+        outIndices.resize(pixelCount * sizeof(uint32_t));
+        outFormat = "u32";
+        outEncoding = "ds_tex4x4";
+        auto* dst = reinterpret_cast<uint32_t*>(outIndices.data());
+
+        for (u32 by = 0; by < blocksY; ++by) {
+            for (u32 bx = 0; bx < blocksX; ++bx) {
+                const u32 blockIndex = bx + by * blocksX;
+                u32 data = gpu.ReadVRAMFlat_Texture<u32>(texAddr + blockIndex * 4);
+                u16 auxData = gpu.ReadVRAMFlat_Texture<u16>(auxAddr + blockIndex * 2);
+                u32 mode = (auxData >> 14) & 0x3;
+                u32 paletteWord = auxData & 0x3FFF;
+                u32 paletteOffsetBytes = palAddr + paletteWord * 4u;
+                u32 paletteBaseIndex = (paletteOffsetBytes - palAddr) >> 1; // convert bytes->entries
+
+                for (u32 j = 0; j < 4; ++j) {
+                    for (u32 i = 0; i < 4; ++i) {
+                        u32 colorLocal = (data >> (2 * (i + j * 4))) & 0x3;
+                        u32 paletteIndex = paletteBaseIndex + colorLocal;
+                        size_t outPos = size_t(by * 4 + j) * width + (bx * 4 + i);
+                        uint32_t encoded = (paletteIndex & 0xFFFFu)
+                                         | (colorLocal << 16)
+                                         | (mode << 18);
+                        dst[outPos] = encoded;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+    default:
+        break;
+    }
+
+    return false;
+}
+
 inline u16 ColorAvg(u16 color0, u16 color1)
 {
     u32 r0 = color0 & 0x001F;

@@ -5,6 +5,12 @@
 #include <fstream>
 #include <chrono>
 #include <algorithm>
+#include <optional>
+#include <sstream>
+#include <iomanip>
+#include <mutex>
+#include <unordered_map>
+#include <unordered_set>
 
 #if TEXDUMP_WITH_STB
   // Provide your local path to stb if needed; these are single-header public domain libraries.
@@ -172,8 +178,15 @@ static bool GVerbose = []{
 struct DumpJob {
     fs::path path;
     std::vector<uint8_t> rgba;
-    uint32_t w, h;
-    bool png;
+    uint32_t w = 0, h = 0;
+    bool png = false;
+    bool writeBase = false;
+    bool hasPalette = false;
+    fs::path paletteInfoPath;
+    std::string paletteInfo;
+    bool hasPaletteIndexMap = false;
+    fs::path paletteIndexPath;
+    std::vector<uint8_t> paletteIndices;
 };
 static std::mutex Qmtx;
 static std::condition_variable Qcv;
@@ -182,6 +195,10 @@ static std::thread Qthread;
 
 static std::mutex SeenMtx;
 static std::unordered_set<std::string> Seen; // filenames we already dumped this session (kept ≤ budget)
+static std::mutex SeenPaletteMtx;
+static std::unordered_set<std::string> SeenPalette;
+static std::mutex SeenPaletteIndexMtx;
+static std::unordered_set<std::string> SeenPaletteIndex;
 
 struct CacheEntry { std::vector<uint8_t> rgba; uint32_t w=0, h=0; size_t size() const { return rgba.size(); } };
 static std::mutex CacheMtx;
@@ -199,17 +216,37 @@ static void worker() {
             job = std::move(Q.front());
             Q.pop_front();
         }
-        // Skip if exists
         std::error_code ec;
-        if (fs::exists(job.path, ec)) continue;
+        const bool alreadyExists = fs::exists(job.path, ec);
 #if TEXDUMP_WITH_STB
-        if (job.png) {
-            fs::create_directories(job.path.parent_path(), ec);
-            stbi_write_png(job.path.string().c_str(), job.w, job.h, 4, job.rgba.data(), int(job.w*4));
-        } else
-#endif
-        {
+        if (job.writeBase && !alreadyExists) {
+            if (job.png) {
+                fs::create_directories(job.path.parent_path(), ec);
+                stbi_write_png(job.path.string().c_str(), job.w, job.h, 4, job.rgba.data(), int(job.w*4));
+            } else {
+                write_tga(job.path, job.rgba.data(), job.w, job.h);
+            }
+        }
+#else
+        if (job.writeBase && !alreadyExists) {
             write_tga(job.path, job.rgba.data(), job.w, job.h);
+        }
+#endif
+        if (job.hasPalette) {
+            if (!fs::exists(job.paletteInfoPath, ec)) {
+                fs::create_directories(job.paletteInfoPath.parent_path(), ec);
+                std::ofstream pal(job.paletteInfoPath);
+                if (pal)
+                    pal << job.paletteInfo;
+            }
+        }
+        if (job.hasPaletteIndexMap) {
+            if (!fs::exists(job.paletteIndexPath, ec)) {
+                fs::create_directories(job.paletteIndexPath.parent_path(), ec);
+                std::ofstream idx(job.paletteIndexPath, std::ios::binary);
+                if (idx)
+                    idx.write(reinterpret_cast<const char*>(job.paletteIndices.data()), std::streamsize(job.paletteIndices.size()));
+            }
         }
     }
 }
@@ -220,6 +257,8 @@ void Init(const TexDumpConfig& cfg, const std::string& gameId) {
     G = cfg;
     SetGameId(gameId);
     Seen.clear(); Seen.reserve(G.inMemoryDedupBudget);
+    SeenPalette.clear();
+    SeenPaletteIndex.clear();
     Cache.clear(); CacheBytes = 0;
     if (G.enableDump) {
         GRunning.store(true, std::memory_order_release);
@@ -243,12 +282,30 @@ void Shutdown() {
         std::lock_guard<std::mutex> lk(SeenMtx);
         Seen.clear();
     }
+    {
+        std::lock_guard<std::mutex> lk(SeenPaletteMtx);
+        SeenPalette.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lk(SeenPaletteIndexMtx);
+        SeenPaletteIndex.clear();
+    }
 }
 void SetGameId(const std::string& gameId) { GGameId = gameId; }
 
-TextureKey MakeKey(const uint8_t* rgba, uint32_t w, uint32_t h, bool hasMips, bool pal0Transparent, DsiTexFmt fmt) {
-    // Hash the contents; include invariants to avoid cross-format collisions
-    uint64_t h1 = fnv1a64(rgba, size_t(w)*h*4, 0xcbf29ce484222325ull);
+TextureKey MakeKey(const uint8_t* rgba, uint32_t w, uint32_t h, bool hasMips,
+                   bool pal0Transparent, DsiTexFmt fmt,
+                   std::optional<uint64_t> paletteInvariantHash) {
+    // Hash the contents; include invariants to avoid cross-format collisions.
+    // When a palette-invariant hash is provided, prefer it so palette changes
+    // reuse the same dump.
+    uint64_t h1;
+    if (paletteInvariantHash.has_value()) {
+        uint64_t data = *paletteInvariantHash;
+        h1 = fnv1a64(&data, sizeof(data), 0xcbf29ce484222325ull);
+    } else {
+        h1 = fnv1a64(rgba, size_t(w)*h*4, 0xcbf29ce484222325ull);
+    }
     uint64_t h2 = fnv1a64(&w, sizeof(w), h1);
     h2 = fnv1a64(&h, sizeof(h), h2);
     uint16_t flags = (hasMips?1:0) | (pal0Transparent?2:0);
@@ -270,42 +327,201 @@ std::string KeyToFilename(const TextureKey& key, bool pngExt) {
 static fs::path GameDumpDir() { return G.dumpDir / (GGameId.empty() ? fs::path("Unknown") : fs::path(GGameId)); }
 static fs::path GameLoadDir() { return G.loadDir / (GGameId.empty() ? fs::path("Unknown") : fs::path(GGameId)); }
 
-void DumpIfEnabled(const TextureKey& key, const uint8_t* rgba, uint32_t w, uint32_t h) {
+static fs::path add_palette_suffix(const fs::path& base, const std::string& palHex) {
+    std::string name = base.filename().string();
+    auto dot = name.find_last_of('.');
+    std::string stem = (dot == std::string::npos) ? name : name.substr(0, dot);
+    std::string ext = (dot == std::string::npos) ? std::string() : name.substr(dot);
+    return base.parent_path() / (stem + "_pal_" + palHex + ext);
+}
+
+static std::string build_palette_info(const std::string& palHex, const std::string& suggestedName,
+                                      const uint32_t* rgba, uint32_t count,
+                                      uint32_t texWidth, uint32_t texHeight,
+                                      const std::string& paletteIndexRelPath,
+                                      const std::string& paletteIndexFormat,
+                                      const std::string& paletteIndexEncoding) {
+    constexpr uint32_t kMaxEmitColors = 1024;
+    const bool hasColors = (rgba != nullptr && count > 0);
+    const uint32_t emitCount = hasColors ? std::min(count, kMaxEmitColors) : 0u;
+    const bool truncated = hasColors && count > emitCount;
+
+    std::ostringstream oss;
+    oss << "{\n";
+    oss << "  \"paletteHash\": \"" << palHex << "\",\n";
+    oss << "  \"suggestedReplacement\": \"" << suggestedName << "\"";
+    if (hasColors) {
+        oss << ",\n  \"colorsRGBA8\": [";
+        for (uint32_t i = 0; i < emitCount; ++i) {
+            uint32_t val = rgba[i];
+            uint8_t r = uint8_t((val >> 24) & 0xFF);
+            uint8_t g = uint8_t((val >> 16) & 0xFF);
+            uint8_t b = uint8_t((val >> 8) & 0xFF);
+            uint8_t a = uint8_t(val & 0xFF);
+            if (i) oss << ", ";
+            oss << "\"" << std::uppercase << std::setfill('0') << std::setw(2) << std::hex
+                << int(r) << std::setw(2) << int(g) << std::setw(2) << int(b) << std::setw(2) << int(a)
+                << std::nouppercase << std::dec << "\"";
+        }
+        oss << "]";
+        if (truncated)
+            oss << ",\n  \"colorsTruncated\": " << (count - emitCount);
+    } else {
+        oss << ",\n  \"colorsRGBA8\": []";
+    }
+    if (!paletteIndexRelPath.empty()) {
+        oss << ",\n  \"paletteIndexMap\": {\n";
+        oss << "    \"file\": \"" << paletteIndexRelPath << "\",\n";
+        oss << "    \"width\": " << texWidth << ",\n";
+        oss << "    \"height\": " << texHeight << ",\n";
+        oss << "    \"stride\": " << texWidth << ",\n";
+        const std::string fmt = paletteIndexFormat.empty() ? std::string("u8") : paletteIndexFormat;
+        oss << "    \"format\": \"" << fmt << "\"";
+        if (!paletteIndexEncoding.empty())
+            oss << ",\n    \"encoding\": \"" << paletteIndexEncoding << "\"";
+        oss << "\n";
+        oss << "  }";
+    }
+    oss << "\n";
+    oss << "}\n";
+    return oss.str();
+}
+
+void DumpIfEnabled(const TextureKey& key, const uint8_t* rgba, uint32_t w, uint32_t h,
+                   std::optional<uint64_t> paletteHash, const uint32_t* paletteRGBA,
+                   uint32_t paletteCount, PaletteIndexGenerator paletteIndexGenerator) {
     if (!G.enableDump) return;
     // Build filename
     const bool png = G.writePNG;
     fs::path dst = GameDumpDir() / KeyToFilename(key, png);
-    // Dedup in memory first
+    bool writeBase = false;
+    std::vector<uint8_t> copy;
     {
         std::lock_guard<std::mutex> lk(SeenMtx);
-        if (Seen.find(dst.string()) != Seen.end()) return;
-        // If file exists on disk, remember it and skip.
-        std::error_code ec;
-        if (fs::exists(dst, ec)) { Seen.insert(dst.string()); return; }
-        if (Seen.size() >= G.inMemoryDedupBudget) {
-            // Simple pruning: erase half (not LRU, but cheap)
-            size_t n = G.inMemoryDedupBudget / 2;
-            auto it = Seen.begin();
-            for (size_t i=0; i<n && it!=Seen.end(); ++i) it = Seen.erase(it);
+        auto str = dst.string();
+        if (Seen.find(str) == Seen.end()) {
+            std::error_code ec;
+            if (!fs::exists(dst, ec)) {
+                if (Seen.size() >= G.inMemoryDedupBudget) {
+                    size_t n = G.inMemoryDedupBudget / 2;
+                    auto it = Seen.begin();
+                    for (size_t i = 0; i < n && it != Seen.end(); ++i)
+                        it = Seen.erase(it);
+                }
+                Seen.insert(str);
+                writeBase = true;
+            } else {
+                Seen.insert(str);
+            }
         }
-        Seen.insert(dst.string());
     }
-    // Enqueue
-    std::vector<uint8_t> copy(rgba, rgba + size_t(w)*h*4);
+
+    fs::path paletteInfoPath;
+    std::string paletteInfo;
+    bool hasPalette = false;
+    bool hasPaletteIndexMap = false;
+    fs::path paletteIndexPath;
+    std::vector<uint8_t> paletteIndexData;
+    if (paletteHash && paletteRGBA && paletteCount) {
+        std::string palHex = to_hex(*paletteHash);
+        fs::path palImagePath = add_palette_suffix(dst, palHex);
+        paletteInfoPath = palImagePath;
+        paletteInfoPath.replace_extension(".pal.json");
+        fs::path palIndexPath = palImagePath;
+        palIndexPath.replace_extension(".pal.idx");
+        bool enqueuePalette = false;
+        bool enqueuePaletteIndex = false;
+        std::string paletteIndexRelPath;
+        std::string paletteIndexFormatStr;
+        std::string paletteIndexEncodingStr;
+        {
+            std::lock_guard<std::mutex> lk(SeenPaletteMtx);
+            std::string palStr = paletteInfoPath.string();
+            if (SeenPalette.find(palStr) == SeenPalette.end()) {
+                std::error_code ec;
+                if (!fs::exists(paletteInfoPath, ec)) {
+                    SeenPalette.insert(palStr);
+                    enqueuePalette = true;
+                } else {
+                    SeenPalette.insert(palStr);
+                }
+            }
+        }
+        if (paletteIndexGenerator) {
+            std::lock_guard<std::mutex> lk(SeenPaletteIndexMtx);
+            std::string idxStr = palIndexPath.string();
+            if (SeenPaletteIndex.find(idxStr) == SeenPaletteIndex.end()) {
+                std::error_code ec;
+                if (!fs::exists(palIndexPath, ec)) {
+                    SeenPaletteIndex.insert(idxStr);
+                    enqueuePaletteIndex = true;
+                } else {
+                    SeenPaletteIndex.insert(idxStr);
+                }
+            }
+            paletteIndexRelPath = palIndexPath.filename().string();
+        }
+        if ((enqueuePalette || enqueuePaletteIndex) && paletteIndexGenerator) {
+            std::vector<uint8_t> generated;
+            if (paletteIndexGenerator(generated, paletteIndexFormatStr, paletteIndexEncodingStr) && !generated.empty()) {
+                paletteIndexData = std::move(generated);
+            } else {
+                enqueuePaletteIndex = false;
+                paletteIndexRelPath.clear();
+                paletteIndexFormatStr.clear();
+                paletteIndexEncodingStr.clear();
+                paletteIndexData.clear();
+            }
+        } else if (!enqueuePaletteIndex) {
+            paletteIndexRelPath.clear();
+        }
+        if (enqueuePalette) {
+            paletteInfo = build_palette_info(palHex, palImagePath.filename().string(), paletteRGBA, paletteCount,
+                                             w, h, paletteIndexRelPath, paletteIndexFormatStr, paletteIndexEncodingStr);
+            hasPalette = true;
+        }
+        if (enqueuePaletteIndex && !paletteIndexData.empty()) {
+            hasPaletteIndexMap = true;
+            paletteIndexPath = std::move(palIndexPath);
+        }
+    }
+
+    if (!writeBase && !hasPalette && !hasPaletteIndexMap)
+        return;
+
+    if (writeBase) {
+        copy.assign(rgba, rgba + size_t(w) * h * 4);
+    }
+
+    DumpJob job;
+    job.path = std::move(dst);
+    job.rgba = std::move(copy);
+    job.w = w;
+    job.h = h;
+    job.png = png;
+    job.writeBase = writeBase;
+    job.hasPalette = hasPalette;
+    job.paletteInfoPath = std::move(paletteInfoPath);
+    job.paletteInfo = std::move(paletteInfo);
+    job.hasPaletteIndexMap = hasPaletteIndexMap;
+    job.paletteIndexPath = std::move(paletteIndexPath);
+    job.paletteIndices = std::move(paletteIndexData);
+
     {
         std::lock_guard<std::mutex> lk(Qmtx);
-        if (Q.size() >= G.ioQueueCap) return; // backpressure: drop
-        Q.push_back(DumpJob{ std::move(dst), std::move(copy), w, h, png });
+        if (Q.size() >= G.ioQueueCap) return;
+        Q.push_back(std::move(job));
     }
     Qcv.notify_one();
 }
 
-bool TryLoadReplacement(const TextureKey& key, std::vector<uint8_t>& rgbaOut, uint32_t& outW, uint32_t& outH) {
+bool TryLoadReplacement(const TextureKey& key, std::vector<uint8_t>& rgbaOut, uint32_t& outW, uint32_t& outH,
+                        std::optional<uint64_t> paletteHash, std::string* usedFilename) {
     if (!G.enableReplace) return false;
-    const bool png = G.writePNG; // if we write PNG we’ll also try reading PNG first
+    const bool png = G.writePNG;
     fs::path base = GameLoadDir();
-    fs::path p1 = base / KeyToFilename(key, true);
-    fs::path p2 = base / KeyToFilename(key, false);
+    fs::path pPng = base / KeyToFilename(key, true);
+    fs::path pTga = base / KeyToFilename(key, false);
 
     auto tryFile = [&](const fs::path& p)->bool {
         // Cache by absolute filename
@@ -361,11 +577,22 @@ bool TryLoadReplacement(const TextureKey& key, std::vector<uint8_t>& rgbaOut, ui
         return true;
     };
 
-    if (png && tryFile(p1)) return true;
-    if (tryFile(p2)) return true;
-    if (!png) {
-        // If PNG wasn’t our default, still try it
-        if (tryFile(p1)) return true;
+    std::vector<fs::path> candidates;
+    if (paletteHash) {
+        std::string palHex = to_hex(*paletteHash);
+        candidates.push_back(add_palette_suffix(pPng, palHex));
+        candidates.push_back(add_palette_suffix(pTga, palHex));
+    }
+    if (png) candidates.push_back(pPng);
+    candidates.push_back(pTga);
+    if (!png) candidates.push_back(pPng);
+
+    for (const auto& cand : candidates) {
+        if (tryFile(cand)) {
+            if (usedFilename)
+                *usedFilename = cand.filename().string();
+            return true;
+        }
     }
     return false;
 }
